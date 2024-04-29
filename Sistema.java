@@ -564,6 +564,15 @@ public class Sistema {
 			}
 			return -1;
 		}
+
+		public int getProcessId(int id) {
+			for (PCB pcb : filaProntos) {
+				if (pcb.getId() == id) {
+					return pcb.getId();
+				}
+			}
+			return -1;
+		}
 		
 	}
 
@@ -703,16 +712,19 @@ public class Sistema {
 		Scanner scanner = new Scanner(System.in);
 
 		while (true) { 
-			System.out.println("COMANDOS DISPONÍVEIS\n" +
-					"new <nomeDePrograma>:  cria um processo na memória\n" +
-					"rm <id>\n: retira o processo id do sistema, tenha ele executado ou não" +
-					"ps:  lista todos processos existentes\n" +
-					"dump <id>:  lista o conteúdo do PCB e o conteúdo da memória do processo com id\n"+
-					"dumpM <inicio, fim>:  lista a memória entre posições início e fim, independente do processo\n"+
-					"executa <id>\n: executa o processo com id fornecido. se não houver processo, retorna erro."+
-					"traceOn: liga modo de execução em que CPU print cada instrução executada\n"+
-					"traceOff: desliga o modo acima\n"+
-					"exit: sai do sistema");
+			System.out.println("\n ---- COMANDOS DISPONIVEIS ----:\n" +
+			"new <nomeDePrograma>: cria um processo na memória\n" +
+			"rm <id>: retira o processo id do sistema, tenha ele executado ou não\n" +
+			"ps: lista todos processos existentes\n" +
+			"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
+			"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
+			"executa <id>: executa o processo com id fornecido. Se não houver processo, retorna erro.\n" +
+			"traceOn: liga modo de execução em que a CPU imprime cada instrução executada\n" +
+			"traceOff: desliga o modo acima\n" +
+			"exit: sai do sistema\n"+
+			"---------------------------------------------------------------------------\n"+
+			"Digite um comando: ");
+	
 
 			String command = scanner.nextLine();
 
@@ -744,10 +756,20 @@ public class Sistema {
 			}
 
 			if (command.equals("ps")) {
-				System.out.println("Processos existentes: ");
-				for (PCB pcb : s.gp.filaProntos) {
-					System.out.println("ID: " + pcb.getId() + " - Tamanho do Programa: " + pcb.getTamPrograma());
+				if (s.gp.filaProntos.isEmpty()) {
+					System.out.println("\n");
+					System.out.println("Nao ha processos na fila de prontos.");
 				}
+				else {
+					System.out.println("\n");
+					System.out.println("Processos prontos:");
+					for (PCB pcb : s.gp.filaProntos) {
+						System.out.println("ID: " + pcb.getId() + " - Tamanho do Programa: " + pcb.getTamPrograma());
+					}
+					System.out.println("\n");
+
+				}
+
 			}
 
 			// se comando for o dump <id>
@@ -756,6 +778,7 @@ public class Sistema {
 				int id = Integer.parseInt(commandParts[1]);
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
+						System.out.println("\n");
 						System.out.println("PCB do processo " + id + ":");
 						System.out.println("ID: " + pcb.getId());
 						System.out.println("PC: " + pcb.getPC());
@@ -763,6 +786,7 @@ public class Sistema {
 						System.out.println("Paginas Alocadas: " + pcb.getPaginasAlocadas());
 						System.out.println("Conteúdo da memória do processo " + id + ":");
 						s.vm.mem.dump(0, pcb.getTamPrograma());
+						System.out.println("\n");
 						break;
 					}
 				}
@@ -773,13 +797,18 @@ public class Sistema {
 				String[] commandParts = command.split(" ");
 				int inicio = Integer.parseInt(commandParts[1]);
 				int fim = Integer.parseInt(commandParts[2]);
+				System.out.println("\n");
 				s.vm.mem.dump(inicio, fim);
+				System.out.println("\n");
 			}
 
 			// se for o executa <id>
 			if (command.startsWith("executa")) {
 				String[] commandParts = command.split(" ");
 				int id = Integer.parseInt(commandParts[1]);
+				if (s.gp.getProcessId(id) == -1) {
+					System.out.println("Processo com ID " + id + " não encontrado.");
+				}				
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
 						s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
