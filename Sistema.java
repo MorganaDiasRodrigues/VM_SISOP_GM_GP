@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
+import java.util.Scanner;
 
 // PUCRS - Escola Politécnica - Sistemas Operacionais
 // Prof. Fernando Dotti
@@ -343,10 +344,10 @@ public class Sistema {
 		public Memory mem;   
         public CPU cpu;    
 
-        public VM(InterruptHandling ih, SysCallHandling sysCall){   
+        public VM(int tamanhoMemoria, InterruptHandling ih, SysCallHandling sysCall){   
 		 // vm deve ser configurada com endereço de tratamento de interrupcoes e de chamadas de sistema
 	     // cria memória
-		     tamMem = 1024;
+		     tamMem = tamanhoMemoria;
   		 	 mem = new Memory(tamMem);
 			 m = mem.m;
 	  	 // cria cpu
@@ -380,9 +381,6 @@ public class Sistema {
         }
     }
 
-    public List<Integer> getTabelaPagina() {
-        return tabelaPagina;
-    }
 }
 
 
@@ -655,34 +653,151 @@ public class Sistema {
 	public GP gp;
 
 
-    public Sistema(){   // a VM com tratamento de interrupções
+    public Sistema(int tamanhoMemoria, int tamanhoPg){   // a VM com tratamento de interrupções
 		 ih = new InterruptHandling();
          sysCall = new SysCallHandling();
-		 vm = new VM(ih, sysCall);
+		 vm = new VM(tamanhoMemoria, ih, sysCall);
 		 sysCall.setVM(vm);
 		 progs = new Programas();
-		 gm = new GM(vm.m, 8);
+		 gm = new GM(vm.m, tamanhoPg);
 		 gp = new GP(gm);
 	}
+
+	public int createNewProcess(Word[] programa) {
+
+		if (programa == null) {
+			System.out.println("Programa não encontrado.");
+			return -1; // Retorna -1 para indicar que o programa não foi encontrado
+		}
+	
+		if (gp.criaProcesso(programa)) {
+			return gp.getLastProcessId();
+		} else {
+			return -1;
+		}
+	}
+	
 
     // -------------------  S I S T E M A - fim --------------------------------------------------------------
     // -------------------------------------------------------------------------------------------------------
 
     // -------------------------------------------------------------------------------------------------------
     // ------------------- instancia e testa sistema
-	public static void main(String args[]) {
-		Sistema s = new Sistema();
-		System.out.println("Tamanho da memória: " + s.vm.tamMem);
-		System.out.println("Tamanho da página: " + s.gm.tamPg);
-		System.out.println("Número de frames: " + s.gm.numeroFrames);		
-		s.loadAndExec(progs.fibonacci10);
-		s.loadAndExec(progs.progMinimo);
-		s.loadAndExec(progs.fatorial);
-		//s.loadAndExec(progs.fatorialTRAP); // saida
-		//s.loadAndExec(progs.fibonacciTRAP); // entrada
-		// s.loadAndExec(progs.PC); // bubble sort
+	// public static void main(String args[]) {
+	// 	Sistema s = new Sistema(1024, 8);
+	// 	System.out.println("Tamanho da memória: " + s.vm.tamMem);
+	// 	System.out.println("Tamanho da página: " + s.gm.tamPg);
+	// 	System.out.println("Número de frames: " + s.gm.numeroFrames);		
+	// 	s.loadAndExec(progs.fibonacci10);
+	// 	s.loadAndExec(progs.progMinimo);
+	// 	s.loadAndExec(progs.fatorial);
+	// 	//s.loadAndExec(progs.fatorialTRAP); // saida
+	// 	//s.loadAndExec(progs.fibonacciTRAP); // entrada
+	// 	// s.loadAndExec(progs.PC); // bubble sort
 			
+	// }
+
+	// SISTEMA INTERATIVO
+	public static void main(String[] args) {
+		Sistema s = new Sistema(1024, 8);
+		Scanner scanner = new Scanner(System.in);
+
+		while (true) { 
+			System.out.println("COMANDOS DISPONÍVEIS\n" +
+					"new <nomeDePrograma>:  cria um processo na memória\n" +
+					"rm <id>\n: retira o processo id do sistema, tenha ele executado ou não" +
+					"ps:  lista todos processos existentes\n" +
+					"dump <id>:  lista o conteúdo do PCB e o conteúdo da memória do processo com id\n"+
+					"dumpM <inicio, fim>:  lista a memória entre posições início e fim, independente do processo\n"+
+					"executa <id>\n: executa o processo com id fornecido. se não houver processo, retorna erro."+
+					"traceOn: liga modo de execução em que CPU print cada instrução executada\n"+
+					"traceOff: desliga o modo acima\n"+
+					"exit: sai do sistema");
+
+			String command = scanner.nextLine();
+
+			if (command.equals("exit")) {
+				break;
+			}
+
+			// Se comando começa com "new"
+			if (command.startsWith("new")) {
+				String[] commandParts = command.split(" ");
+				String programaNome = commandParts[1];
+				switch (programaNome) {
+					case "fatorial" -> s.createNewProcess(progs.fatorial);
+					case "fibonacci10" -> s.createNewProcess(progs.fibonacci10);
+					case "progMinimo" -> s.createNewProcess(progs.progMinimo);
+					case "fatorialTRAP" -> s.createNewProcess(progs.fatorialTRAP);
+					case "PB" -> s.createNewProcess(progs.PB);
+					case "PC" -> s.createNewProcess(progs.PC);
+					case "fibonacciTRAP" -> s.createNewProcess(progs.fibonacciTRAP);
+					default -> System.out.println("Programa '" + programaNome + "' não encontrado.");
+			}
+		}
+
+			// Se comando começa com "rm"
+			if (command.startsWith("rm")) {
+				String[] commandParts = command.split(" ");
+				int id = Integer.parseInt(commandParts[1]);
+				s.gp.desalocaProcesso(id);
+			}
+
+			if (command.equals("ps")) {
+				System.out.println("Processos existentes: ");
+				for (PCB pcb : s.gp.filaProntos) {
+					System.out.println("ID: " + pcb.getId() + " - Tamanho do Programa: " + pcb.getTamPrograma());
+				}
+			}
+
+			// se comando for o dump <id>
+			if (command.startsWith("dump")) {
+				String[] commandParts = command.split(" ");
+				int id = Integer.parseInt(commandParts[1]);
+				for (PCB pcb : s.gp.filaProntos) {
+					if (pcb.getId() == id) {
+						System.out.println("PCB do processo " + id + ":");
+						System.out.println("ID: " + pcb.getId());
+						System.out.println("PC: " + pcb.getPC());
+						System.out.println("Tamanho do Programa: " + pcb.getTamPrograma());
+						System.out.println("Paginas Alocadas: " + pcb.getPaginasAlocadas());
+						System.out.println("Conteúdo da memória do processo " + id + ":");
+						s.vm.mem.dump(0, pcb.getTamPrograma());
+						break;
+					}
+				}
+			}
+
+			// se for o dumpM <inicio, fim>
+			if (command.startsWith("dumpM")) {
+				String[] commandParts = command.split(" ");
+				int inicio = Integer.parseInt(commandParts[1]);
+				int fim = Integer.parseInt(commandParts[2]);
+				s.vm.mem.dump(inicio, fim);
+			}
+
+			// se for o executa <id>
+			if (command.startsWith("executa")) {
+				String[] commandParts = command.split(" ");
+				int id = Integer.parseInt(commandParts[1]);
+				for (PCB pcb : s.gp.filaProntos) {
+					if (pcb.getId() == id) {
+						s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
+						s.vm.cpu.run();
+						break;
+					}
+				}
+			}
+
+			if (command.equals("traceOn")) {
+				s.vm.cpu.debug = true;
+			}
+
+			if (command.equals("traceOff")) {
+				s.vm.cpu.debug = false;
+			}
 	}
+}
 
 
    // -------------------------------------------------------------------------------------------------------
