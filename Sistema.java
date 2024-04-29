@@ -494,7 +494,7 @@ public class Sistema {
 			return pc;
 		}
 
-		public List<Integer> getPaginasAlocadas() {
+		public List<Integer> getFramesAlocados() {
 			return this.framesAlocados;
 		}
         public int getId(){
@@ -527,8 +527,8 @@ public class Sistema {
 			}
 
 
-			List<Integer> paginasAlocadas = gm.getFramesAlocados();
-			PCB pcb = new PCB(processID++, paginasAlocadas, tamanhoPrograma);
+			List<Integer> FramesAlocados = gm.getFramesAlocados();
+			PCB pcb = new PCB(processID++, FramesAlocados, tamanhoPrograma);
 			pcb.setPC(0);
 			filaProntos.add(pcb);
 
@@ -550,7 +550,7 @@ public class Sistema {
 				System.out.println("Processo com ID " + id + " não encontrado.");
 				return false;
 			}
-			gm.desaloca(toRemove.getPaginasAlocadas());
+			gm.desaloca(toRemove.getFramesAlocados());
 	
 			filaProntos.remove(toRemove);
 	
@@ -783,7 +783,7 @@ public class Sistema {
 						System.out.println("ID: " + pcb.getId());
 						System.out.println("PC: " + pcb.getPC());
 						System.out.println("Tamanho do Programa: " + pcb.getTamPrograma());
-						System.out.println("Paginas Alocadas: " + pcb.getPaginasAlocadas());
+						System.out.println("Frames alocados " + pcb.getFramesAlocados());
 						System.out.println("Conteúdo da memória do processo " + id + ":");
 						s.vm.mem.dump(0, pcb.getTamPrograma());
 						System.out.println("\n");
