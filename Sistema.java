@@ -5,6 +5,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Scanner;
+import java.util.concurrent.TimeUnit;
 
 // PUCRS - Escola Politécnica - Sistemas Operacionais
 // Prof. Fernando Dotti
@@ -58,6 +59,14 @@ public class Sistema {
 		public Word(Opcode _opc, int _r1, int _r2, int _p) {  // vide definição da VM - colunas vermelhas da tabela
 			opc = _opc;   r1 = _r1;    r2 = _r2;	p = _p;
 		}
+
+		 // Construtor padrão que reseta a palavra
+		 public Word() {
+			opc = Opcode.___;  // Supondo que ___ seja um opcode inválido ou que indique uma posição de memória não utilizada
+			r1 = 0;
+			r2 = 0;
+			p = 0;
+		}
 	}
 	
 	// -------------------------------------------------------------------------------------------------------
@@ -71,7 +80,7 @@ public class Sistema {
 		ADDI, SUBI, ADD, SUB, MULT,         // matematicos
 		LDI, LDD, STD, LDX, STX, MOVE,      // movimentacao
         TRAP                                // chamada de sistema
-	}
+	, stopInstruction}
 
 	public enum Interrupts {               // possiveis interrupcoes que esta CPU gera
 		noInterrupt, intEnderecoInvalido, intInstrucaoInvalida, intOverflow, intSTOP;
@@ -95,6 +104,7 @@ public class Sistema {
 
 		private InterruptHandling ih;     // significa desvio para rotinas de tratamento de  Int - se int ligada, desvia
         private SysCallHandling sysCall;  // significa desvio para tratamento de chamadas de sistema - trap 
+		private int stopInstruction;      // significa o fim do processo
 		private boolean debug;            // se true entao mostra cada instrucao em execucao
 						
 		public CPU(Memory _mem, InterruptHandling _ih, SysCallHandling _sysCall, boolean _debug) {     // ref a MEMORIA e interrupt handler passada na criacao da CPU
@@ -105,6 +115,7 @@ public class Sistema {
 			reg = new int[10]; 		// aloca o espaço dos registradores - regs 8 e 9 usados somente para IO
 			ih = _ih;               // aponta para rotinas de tratamento de int
             sysCall = _sysCall;     // aponta para rotinas de tratamento de chamadas de sistema
+			stopInstruction = 0;	// constante para a instrução de STOP
 			debug =  _debug;        // se true, print da instrucao em execucao
 		}
 		
@@ -301,6 +312,9 @@ public class Sistema {
 								}
 							 break; 
 
+						case stopInstruction:
+								sysCall.handle(); // chama a rotina de tratamento na parte de chamada de sistemas para a instrução STOP
+								break;
 					// outras
 						case STOP: // por enquanto, para execucao
 							irpt = Interrupts.intSTOP;
@@ -343,6 +357,8 @@ public class Sistema {
         public Word[] m;  
 		public Memory mem;   
         public CPU cpu;    
+		public List<PCB> processList;
+		public PCB currentProcess;
 
         public VM(int tamanhoMemoria, InterruptHandling ih, SysCallHandling sysCall){   
 		 // vm deve ser configurada com endereço de tratamento de interrupcoes e de chamadas de sistema
@@ -352,7 +368,39 @@ public class Sistema {
 			 m = mem.m;
 	  	 // cria cpu
 			 cpu = new CPU(mem,ih,sysCall, true);                   // true liga debug
+			 processList = new ArrayList<>();
 	    }	
+		public void addProcess(PCB process){
+			processList.add(process);
+		}
+		 // Método para setar o processo atual (exemplo)
+		 public void setCurrentProcess(PCB process) {
+			currentProcess = process;
+			cpu.setContext(process.getFramesAlocados().get(0), process.getTamPrograma(), process.getPC());
+		}
+		
+   		// Implementação do método stopProcess()
+   		public void stopProcess() {
+			if (currentProcess != null) {
+		    // Libera a memória ocupada pelo processo atual
+			for (Integer frame : currentProcess.getFramesAlocados()) {
+				for (int i = frame; i < frame + currentProcess.getTamPrograma(); i++) {
+					if (i < m.length) {
+					m[i] = new Word(); // Assume que Word() reseta a palavra de memória
+				}
+			}
+		}
+		// Remove o PCB da lista de processos
+		processList.remove(currentProcess);
+		currentProcess = null;
+		// Escalonar um novo processo (simplesmente pegar o próximo na lista, se houver)
+		if (!processList.isEmpty()) {
+			setCurrentProcess(processList.get(0)); // Exemplo simples de escalonamento
+		} else {
+			System.out.println("Nenhum processo restante para escalonar.");
+		}
+	}
+}
 	}
     // ------------------- V M  - fim ------------------------------------------------------------------------
 	// -------------------------------------------------------------------------------------------------------
@@ -511,11 +559,13 @@ public class Sistema {
 		private GM gm;
 		private Queue<PCB> filaProntos;
 		private int processID;
+		private int quantum; // intervalo de tempo em que um processo é permitido executar na CPU sem ser interrompido.
 
-		public GP(GM gm) {
+		public GP(GM gm, int quantum) {
 			this.gm = gm;
 			this.filaProntos = new LinkedList<>();
 			this.processID = 0;
+			this.quantum = quantum;
 		}
 
 		public boolean criaProcesso(Word[] programa) {
@@ -558,6 +608,35 @@ public class Sistema {
 			return true;
 		}
 
+		public void execAll(){ // executa todos os processos na fila de prontos de maneira escalonada(round robin)
+			while(!filaProntos.isEmpty()){
+				PCB pcb = filaProntos.poll();
+				executaProcesso(pcb);
+			}
+		}
+
+		public void executaProcesso(PCB pcb){ // executa um processo individualmente
+			int remainingQuantum = quantum;
+
+		// dentro do while abaixo, as condições são de garantir se ainda há tempo de CPU disponível parar o processo antes de esgotar o quantum.
+		// E também verifica se o program counter do processo atual é mnor do que o tamanho do programa.
+
+			while(remainingQuantum > 0 && pcb.getPC() < pcb.getTamPrograma()){
+				s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
+				// a CPU executa uma instrução do processo atual dependendo do tempo restante no quantum
+				s.vm.cpu.run();
+				// reduz o quantum que ainda resta para o processo atual.Assim, indica que a unidade de tempo da CPU foi consumida.
+				remainingQuantum--;
+				// atualiza o program counter(PC) do processo mais atual para indicar que houve um avanço até a próxima instrução do programa
+				pcb.setPC(pcb.getPC() + 1); 
+			}
+			if(pcb.getPC() < pcb.getTamPrograma()){
+				filaProntos.add(pcb);
+			} else {
+				System.out.println("Processo ID " + pcb.getId() + " concluído com sucesso.");
+			}
+		}
+
 		public int getLastProcessId() {
 			if (!filaProntos.isEmpty()) {
 				return filaProntos.peek().getId();
@@ -596,11 +675,14 @@ public class Sistema {
 
     // ------------------- C H A M A D A S  D E  S I S T E M A  - rotinas de tratamento ----------------------
     public class SysCallHandling {
+		
         private VM vm;
         public void setVM(VM _vm){
             vm = _vm;
         }
         public void handle() {   // apenas avisa - todas interrupcoes neste momento finalizam o programa
+				vm.stopProcess(); // Chama o método stopProcess na VM para tratar a instrução STOP
+			}
             System.out.println("                                               Chamada de Sistema com op  /  par:  "+ vm.cpu.reg[8] + " / " + vm.cpu.reg[9]);
 		}
     }
@@ -660,16 +742,34 @@ public class Sistema {
 	public static Programas progs;
 	public GM gm;
 	public GP gp;
+	public static int delta; // tempo delta par o relógio
 
 
-    public Sistema(int tamanhoMemoria, int tamanhoPg){   // a VM com tratamento de interrupções
+    public Sistema(int tamanhoMemoria, int tamanhoPg, int delta){   // a VM com tratamento de interrupções
+		 this.delta = delta;
 		 ih = new InterruptHandling();
          sysCall = new SysCallHandling();
 		 vm = new VM(tamanhoMemoria, ih, sysCall);
 		 sysCall.setVM(vm);
 		 progs = new Programas();
 		 gm = new GM(vm.m, tamanhoPg);
-		 gp = new GP(gm);
+		 gp = new GP(gm, delta);
+		 iniciaRelogio();
+	}
+
+	public int iniciaRelogio(){
+		Thread clock = new Thread(() -> {
+			try{
+				while(true){
+					TimeUnit.SECONDS.sleep(delta);
+					System.out.println("Interrupção do relógio, executando o escalonamento...");
+					gp.execAll();
+				} 
+			} catch(InterruptedException e){
+				e.printStackTrace();
+			}
+		});
+		clock.start();
 	}
 
 	public int createNewProcess(Word[] programa) {
@@ -708,7 +808,7 @@ public class Sistema {
 
 	// SISTEMA INTERATIVO
 	public static void main(String[] args) {
-		Sistema s = new Sistema(1024, 8);
+		Sistema s = new Sistema(1024, 8, delta);
 		Scanner scanner = new Scanner(System.in);
 
 		while (true) { 
@@ -719,6 +819,7 @@ public class Sistema {
 			"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
 			"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
 			"executa <id>: executa o processo com id fornecido. Se não houver processo, retorna erro.\n" +
+			"execAll: executa todos os processos de forma escalonada utilizando o roundo robin.\n" +
 			"traceOn: liga modo de execução em que a CPU imprime cada instrução executada\n" +
 			"traceOff: desliga o modo acima\n" +
 			"exit: sai do sistema\n"+
@@ -816,6 +917,11 @@ public class Sistema {
 						break;
 					}
 				}
+			}
+
+			// se for o execAll
+			if(command.equals("execAll")){
+				s.gp.execAll();
 			}
 
 			if (command.equals("traceOn")) {
