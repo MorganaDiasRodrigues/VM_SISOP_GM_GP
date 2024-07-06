@@ -967,26 +967,33 @@ public class Sistema {
 	// //s.loadAndExec(progs.fibonacciTRAP); // entrada
 	// // s.loadAndExec(progs.PC); // bubble sort
 
+	// Funcao auxiliar para nao repetir os comandos no terminal
+	public void help() {
+		System.out.println("\n ---- COMANDOS DISPONIVEIS ----:\n" +
+				"new <nomeDePrograma>: cria um processo na memória\n" +
+				"rm <id>: retira o processo id do sistema, tenha ele executado ou nao\n" +
+				"ps: lista todos processos existentes\n" +
+				"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
+				"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
+				"executa <id>: executa o processo com id fornecido. Se nao houver processo, retorna erro.\n" +
+				"traceOn: liga modo de execuçao em que a CPU imprime cada instruçao executada\n" +
+				"traceOff: desliga o modo acima\n" +
+				"exit: sai do sistema\n" +
+				"help: repete os comandos disponiveis\n" +
+				"---------------------------------------------------------------------------\n" +
+				"Digite um comando: ");
+		}
 	// SISTEMA INTERATIVO
 	public static void main(String[] args) {
 		Sistema s = new Sistema(1024, 8);
 		Scanner scanner = new Scanner(System.in);
-
+		s.help(); //printa os comandos de ajuda 
 		while (true) {
-			System.out.println("\n ---- COMANDOS DISPONIVEIS ----:\n" +
-					"new <nomeDePrograma>: cria um processo na memória\n" +
-					"rm <id>: retira o processo id do sistema, tenha ele executado ou não\n" +
-					"ps: lista todos processos existentes\n" +
-					"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
-					"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
-					"executa <id>: executa o processo com id fornecido. Se não houver processo, retorna erro.\n" +
-					"traceOn: liga modo de execução em que a CPU imprime cada instrução executada\n" +
-					"traceOff: desliga o modo acima\n" +
-					"exit: sai do sistema\n" +
-					"---------------------------------------------------------------------------\n" +
-					"Digite um comando: ");
 
 			String command = scanner.nextLine();
+			if(command.equals("help")){
+				s.help();
+			}
 
 			if (command.equals("exit")) {
 				break;
