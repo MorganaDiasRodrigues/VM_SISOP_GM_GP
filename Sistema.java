@@ -8,12 +8,12 @@ import java.util.Scanner;
 
 // PUCRS - Escola Politécnica - Sistemas Operacionais
 // Prof. Fernando Dotti
-// Código fornecido como parte da solução do projeto de Sistemas Operacionais
+// Código fornecido como parte da soluçao do projeto de Sistemas Operacionais
 //
 // VM
 //    HW = memória, cpu
 //    SW = tratamento int e chamada de sistema
-// Funcionalidades de carga, execução e dump de memória
+// Funcionalidades de carga, execuçao e dump de memória
 
 public class Sistema {
 
@@ -106,7 +106,7 @@ public class Sistema {
 		public int r2; // indice do segundo registrador da operacao (Rc ou Rs cfe operacao)
 		public int p; // parametro para instrucao (k ou A cfe operacao), ou o dado, se opcode = DADO
 
-		public Word(Opcode _opc, int _r1, int _r2, int _p) { // vide definição da VM - colunas vermelhas da tabela
+		public Word(Opcode _opc, int _r1, int _r2, int _p) { // vide definiçao da VM - colunas vermelhas da tabela
 			opc = _opc;
 			r1 = _r1;
 			r2 = _r2;
@@ -190,12 +190,7 @@ public class Sistema {
 		}
 
 		public boolean run(Scheduler scheduler, PCB pcb) { // execucao da CPU supoe que o contexto da CPU, vide acima,
-															// esta
-			// devidamente
-			// setado
 			while (true) { // ciclo de instrucoes. acaba cfe instrucao, veja cada caso.
-				// --------------------------------------------------------------------------------------------------
-				// FETCH
 				if (legal(pc)) { // pc valido
 					ir = m[pc]; // <<<<<<<<<<<< busca posicao da memoria apontada por pc, guarda em ir
 					if (debug) {
@@ -204,87 +199,85 @@ public class Sistema {
 					}
 					// --------------------------------------------------------------------------------------------------
 					// EXECUTA INSTRUCAO NO ir
-					switch (ir.opc) { // conforme o opcode (código de operação) executa
-
+					switch (ir.opc) { // conforme o opcode (código de operaçao) executa
+		
 						// Instrucoes de Busca e Armazenamento em Memoria
 						case LDI: // Rd ← k
 							reg[ir.r1] = ir.p;
 							pc++;
 							break;
-
+		
 						case LDD: // Rd <- [A]
 							if (legal(ir.p)) {
 								reg[ir.r1] = m[ir.p].p;
 								pc++;
 							}
 							break;
-
-						case LDX: // RD <- [RS] // NOVA
+		
+						case LDX: // RD <- [RS]
 							if (legal(reg[ir.r2])) {
 								reg[ir.r1] = m[reg[ir.r2]].p;
 								pc++;
 							}
 							break;
-
+		
 						case STD: // [A] ← Rs
 							if (legal(ir.p)) {
 								m[ir.p].opc = Opcode.DATA;
 								m[ir.p].p = reg[ir.r1];
 								pc++;
 							}
-							;
 							break;
-
+		
 						case STX: // [Rd] ←Rs
 							if (legal(reg[ir.r1])) {
 								m[reg[ir.r1]].opc = Opcode.DATA;
 								m[reg[ir.r1]].p = reg[ir.r2];
 								pc++;
 							}
-							;
 							break;
-
+		
 						case MOVE: // RD <- RS
 							reg[ir.r1] = reg[ir.r2];
 							pc++;
 							break;
-
+		
 						// Instrucoes Aritmeticas
 						case ADD: // Rd ← Rd + Rs
 							reg[ir.r1] = reg[ir.r1] + reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-
+		
 						case ADDI: // Rd ← Rd + k
 							reg[ir.r1] = reg[ir.r1] + ir.p;
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-
+		
 						case SUB: // Rd ← Rd - Rs
 							reg[ir.r1] = reg[ir.r1] - reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-
-						case SUBI: // RD <- RD - k // NOVA
+		
+						case SUBI: // RD <- RD - k
 							reg[ir.r1] = reg[ir.r1] - ir.p;
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-
+		
 						case MULT: // Rd <- Rd * Rs
 							reg[ir.r1] = reg[ir.r1] * reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-
+		
 						// Instrucoes JUMP
 						case JMP: // PC <- k
 							pc = ir.p;
 							break;
-
+		
 						case JMPIG: // If Rc > 0 Then PC ← Rs Else PC ← PC +1
 							if (reg[ir.r2] > 0) {
 								pc = reg[ir.r1];
@@ -292,7 +285,7 @@ public class Sistema {
 								pc++;
 							}
 							break;
-
+		
 						case JMPIGK: // If RC > 0 then PC <- k else PC++
 							if (reg[ir.r2] > 0) {
 								pc = ir.p;
@@ -300,7 +293,7 @@ public class Sistema {
 								pc++;
 							}
 							break;
-
+		
 						case JMPILK: // If RC < 0 then PC <- k else PC++
 							if (reg[ir.r2] < 0) {
 								pc = ir.p;
@@ -308,7 +301,7 @@ public class Sistema {
 								pc++;
 							}
 							break;
-
+		
 						case JMPIEK: // If RC = 0 then PC <- k else PC++
 							if (reg[ir.r2] == 0) {
 								pc = ir.p;
@@ -316,75 +309,74 @@ public class Sistema {
 								pc++;
 							}
 							break;
-
-						case JMPIL: // if Rc < 0 then PC <- Rs Else PC <- PC +1
+		
+						case JMPIL: // if Rc < 0 then PC ← Rs Else PC ← PC +1
 							if (reg[ir.r2] < 0) {
 								pc = reg[ir.r1];
 							} else {
 								pc++;
 							}
 							break;
-
-						case JMPIE: // If Rc = 0 Then PC <- Rs Else PC <- PC +1
+		
+						case JMPIE: // If Rc = 0 Then PC ← Rs Else PC ← PC +1
 							if (reg[ir.r2] == 0) {
 								pc = reg[ir.r1];
 							} else {
 								pc++;
 							}
 							break;
-
-						case JMPIM: // PC <- [A]
+		
+						case JMPIM: // PC ← [A]
 							pc = m[ir.p].p;
 							break;
-
-						case JMPIGM: // If RC > 0 then PC <- [A] else PC++
+		
+						case JMPIGM: // If RC > 0 then PC ← [A] else PC++
 							if (reg[ir.r2] > 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-
-						case JMPILM: // If RC < 0 then PC <- k else PC++
+		
+						case JMPILM: // If RC < 0 then PC ← k else PC++
 							if (reg[ir.r2] < 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-
-						case JMPIEM: // If RC = 0 then PC <- k else PC++
+		
+						case JMPIEM: // If RC = 0 then PC ← k else PC++
 							if (reg[ir.r2] == 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-
-						case JMPIGT: // If RS>RC then PC <- k else PC++
+		
+						case JMPIGT: // If RS>RC then PC ← k else PC++
 							if (reg[ir.r1] > reg[ir.r2]) {
 								pc = ir.p;
 							} else {
 								pc++;
 							}
 							break;
-
+		
 						// outras
 						case STOP: // por enquanto, para execucao
 							irpt = Interrupts.intSTOP;
 							break;
-
+		
 						case DATA:
 							irpt = Interrupts.intInstrucaoInvalida;
 							break;
-
+		
 						// Chamada de sistema
 						case TRAP:
-							sysCall.handle(); // <<<<< aqui desvia para rotina de chamada de sistema, no momento so
-												// temos IO
+							sysCall.handle(); // <<<<< aqui desvia para rotina de chamada de sistema, no momento so temos IO
 							pc++;
 							break;
-
+		
 						// Inexistente
 						default:
 							irpt = Interrupts.intInstrucaoInvalida;
@@ -393,23 +385,21 @@ public class Sistema {
 					pcb.setPC(pc);
 				}
 				scheduler.addCicle();
-				// System.out.println("pc");
-				// System.out.println(pc);
-				// System.out.println("PCB PC");
-				// System.out.println(pcb.getPC());
-				if (scheduler.isLimit() == true) {
-					irpt = Interrupts.intBlocked;
-					return false;
+				if (scheduler.isLimit()) { // mudei aqui
+					irpt = Interrupts.intBlocked; // mudei aqui
+					return false; // mudei aqui
 				}
-				// --------------------------------------------------------------------------------------------------
-				// VERIFICA INTERRUPÇÃO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
-				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupção
+				if (irpt != Interrupts.noInterrupt) { // existe interrupçao
 					ih.handle(irpt, pc); // desvia para rotina de tratamento
+					if (irpt == Interrupts.intSTOP) { // mudei aqui
+						return true; // Retorna true para indicar que o processo terminou corretamente // mudei aqui
+					}
 					break; // break sai do loop da cpu
 				}
-			} // FIM DO CICLO DE UMA INSTRUÇÃO
+			} // FIM DO CICLO DE UMA INSTRUÇAO
 			return true;
 		}
+		
 
 		public void run_without_scheduler() { // execucao da CPU supoe que o contexto da CPU, vide acima, esta
 												// devidamente
@@ -425,7 +415,7 @@ public class Sistema {
 					}
 					// --------------------------------------------------------------------------------------------------
 					// EXECUTA INSTRUCAO NO ir
-					switch (ir.opc) { // conforme o opcode (código de operação) executa
+					switch (ir.opc) { // conforme o opcode (código de operaçao) executa
 
 						// Instrucoes de Busca e Armazenamento em Memoria
 						case LDI: // Rd ← k
@@ -613,12 +603,12 @@ public class Sistema {
 					}
 				}
 				// --------------------------------------------------------------------------------------------------
-				// VERIFICA INTERRUPÇÃO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
-				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupção
+				// VERIFICA INTERRUPÇaO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
+				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupçao
 					ih.handle(irpt, pc); // desvia para rotina de tratamento
 					break; // break sai do loop da cpu
 				}
-			} // FIM DO CICLO DE UMA INSTRUÇÃO
+			} // FIM DO CICLO DE UMA INSTRUÇaO
 		}
 	}
 	// ------------------ C P U - fim
@@ -734,7 +724,7 @@ public class Sistema {
 			List<Integer> framesDisponiveis = getFramesDisponiveis();
 
 			if (framesDisponiveis.size() < numeroFramesNecessarios) {
-				System.out.println("Não há frames suficientes para alocar o programa");
+				System.out.println("Nao há frames suficientes para alocar o programa");
 				return false;
 			}
 
@@ -817,7 +807,7 @@ public class Sistema {
 			int tamanhoPrograma = programa.length;
 
 			if (!gm.alocaPrograma(programa)) {
-				System.out.println("Não há memória suficiente para alocar o programa.");
+				System.out.println("Nao há memória suficiente para alocar o programa.");
 				return false;
 			}
 
@@ -841,7 +831,7 @@ public class Sistema {
 			}
 
 			if (toRemove == null) {
-				System.out.println("Processo com ID " + id + " não encontrado.");
+				System.out.println("Processo com ID " + id + " nao encontrado.");
 				return false;
 			}
 			gm.desaloca(toRemove.getFramesAlocados());
@@ -906,11 +896,11 @@ public class Sistema {
 		}
 	}
 
-	// # o criaremos o gerente de memória implementando paginação.
+	// # o criaremos o gerente de memória implementando paginaçao.
 
 	// ------------------ U T I L I T A R I O S D O S I S T E M A
 	// -----------------------------------------
-	// ------------------ load é invocado a partir de requisição do usuário
+	// ------------------ load é invocado a partir de requisiçao do usuário
 
 	// -------------------------------------------------------------------------------------------------------
 	// ------------------- S I S T E M A
@@ -938,8 +928,8 @@ public class Sistema {
 	public int createNewProcess(Word[] programa) {
 
 		if (programa == null) {
-			System.out.println("Programa não encontrado.");
-			return -1; // Retorna -1 para indicar que o programa não foi encontrado
+			System.out.println("Programa nao encontrado.");
+			return -1; // Retorna -1 para indicar que o programa nao foi encontrado
 		}
 
 		if (gp.criaProcesso(programa)) {
@@ -1011,7 +1001,7 @@ public class Sistema {
 					case "PB" -> s.createNewProcess(progs.PB);
 					case "PC" -> s.createNewProcess(progs.PC);
 					case "fibonacciTRAP" -> s.createNewProcess(progs.fibonacciTRAP);
-					default -> System.out.println("Programa '" + programaNome + "' não encontrado.");
+					default -> System.out.println("Programa '" + programaNome + "' nao encontrado.");
 				}
 			}
 
@@ -1072,7 +1062,7 @@ public class Sistema {
 				String[] commandParts = command.split(" ");
 				int id = Integer.parseInt(commandParts[1]);
 				if (s.gp.getProcessId(id) == -1) {
-					System.out.println("Processo com ID " + id + " não encontrado.");
+					System.out.println("Processo com ID " + id + " nao encontrado.");
 				}
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
@@ -1084,23 +1074,19 @@ public class Sistema {
 			}
 
 			if (command.equals("execAll")) {
-				while (true) {
-					PCB pcb = s.gp.filaProntos.poll();
+				while (!s.gp.filaProntos.isEmpty()) { // Enquanto houver processos na fila de prontos
+					PCB pcb = s.gp.filaProntos.poll(); // Remove o primeiro processo da fila
 					System.out.println("Executando o programa " + pcb.getId());
-					s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
-					if (s.vm.cpu.run(s.scheduler, pcb) == false) {
-						s.gp.filaProntos.add(pcb);
+					s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC()); // Configura o contexto da CPU para o processo
+					if (!s.vm.cpu.run(s.scheduler, pcb)) { // Executa o processo e verifica se foi bloqueado
+						s.gp.filaProntos.add(pcb); // Se bloqueado, adiciona o processo de volta à fila de prontos
 					} else {
-						s.gp.desalocaProcesso(pcb.getId());
+						System.out.println("Processo com ID " + pcb.getId() + " finalizado."); // Adicionei esta linha // mudei aqui
+						s.gp.desalocaProcesso(pcb.getId()); // Se finalizado, desaloca o processo
 					}
-					s.scheduler.resetCicles();
-					if (s.gp.filaProntos.isEmpty() == true) {
-						break;
-					}
-
+					s.scheduler.resetCicles(); // Reseta os ciclos do escalonador
 				}
-
-			}
+			}			
 
 			if (command.equals("traceOn")) {
 				s.vm.cpu.debug = true;
@@ -1115,7 +1101,7 @@ public class Sistema {
 	// -------------------------------------------------------------------------------------------------------
 	// -------------------------------------------------------------------------------------------------------
 	// -------------------------------------------------------------------------------------------------------
-	// --------------- P R O G R A M A S - não fazem parte do sistema
+	// --------------- P R O G R A M A S - nao fazem parte do sistema
 	// esta classe representa programas armazenados (como se estivessem em disco)
 	// que podem ser carregados para a memória (load faz isto)
 
@@ -1131,9 +1117,9 @@ public class Sistema {
 				new Word(Opcode.MULT, 1, 0, -1), // 5 r1 = r1 * r0
 				new Word(Opcode.SUB, 0, 6, -1), // 6 decrementa r0 1
 				new Word(Opcode.JMP, -1, -1, 4), // 7 vai p posicao 4
-				new Word(Opcode.STD, 1, -1, 10), // 8 coloca valor de r1 na posição 10
+				new Word(Opcode.STD, 1, -1, 10), // 8 coloca valor de r1 na posiçao 10
 				new Word(Opcode.STOP, -1, -1, -1), // 9 stop
-				new Word(Opcode.DATA, -1, -1, -1) }; // 10 ao final o valor do fatorial estará na posição 10 da memória
+				new Word(Opcode.DATA, -1, -1, -1) }; // 10 ao final o valor do fatorial estará na posiçao 10 da memória
 
 		public Word[] progMinimo = new Word[] {
 				new Word(Opcode.LDI, 0, -1, 999),
@@ -1209,7 +1195,7 @@ public class Sistema {
 				new Word(Opcode.STD, 1, -1, 41),
 				new Word(Opcode.JMPIL, 4, 7, -1), // pula pra stop caso negativo *
 				new Word(Opcode.JMPIE, 4, 7, -1), // pula pra stop caso 0
-				new Word(Opcode.ADDI, 7, -1, 41), // fibonacci + posição do stop
+				new Word(Opcode.ADDI, 7, -1, 41), // fibonacci + posiçao do stop
 				new Word(Opcode.LDI, 1, -1, 0),
 				new Word(Opcode.STD, 1, -1, 41), // 25 posicao de memoria onde inicia a serie de fibonacci gerada
 				new Word(Opcode.SUBI, 3, -1, 1), // se 1 pula pro stop
@@ -1220,7 +1206,7 @@ public class Sistema {
 				new Word(Opcode.SUBI, 3, -1, 2), // se 2 pula pro stop
 				new Word(Opcode.JMPIE, 4, 3, -1),
 				new Word(Opcode.LDI, 0, -1, 43),
-				new Word(Opcode.LDI, 6, -1, 25), // salva posição de retorno do loop
+				new Word(Opcode.LDI, 6, -1, 25), // salva posiçao de retorno do loop
 				new Word(Opcode.LDI, 5, -1, 0), // salva tamanho
 				new Word(Opcode.ADD, 5, 7, -1),
 				new Word(Opcode.LDI, 7, -1, 0), // zera (inicio do loop)
@@ -1257,7 +1243,7 @@ public class Sistema {
 		};
 
 		public Word[] PB = new Word[] {
-				// dado um inteiro em alguma posição de memória,
+				// dado um inteiro em alguma posiçao de memória,
 				// se for negativo armazena -1 na saída; se for positivo responde o fatorial do
 				// número na saída
 				new Word(Opcode.LDI, 0, -1, 7), // numero para colocar na memoria
@@ -1279,9 +1265,9 @@ public class Sistema {
 
 		public Word[] PC = new Word[] {
 				// Para um N definido (10 por exemplo)
-				// o programa ordena um vetor de N números em alguma posição de memória;
+				// o programa ordena um vetor de N números em alguma posiçao de memória;
 				// ordena usando bubble sort
-				// loop ate que não swap nada
+				// loop ate que nao swap nada
 				// passando pelos N valores
 				// faz swap de vizinhos se da esquerda maior que da direita
 				new Word(Opcode.LDI, 7, -1, 5), // TAMANHO DO BUBBLE SORT (N)
@@ -1304,7 +1290,7 @@ public class Sistema {
 				new Word(Opcode.STD, 3, -1, 98),
 				new Word(Opcode.LDI, 3, -1, 38), // Posicao para pulo CHAVE 3
 				new Word(Opcode.STD, 3, -1, 97),
-				new Word(Opcode.LDI, 3, -1, 25), // Posicao para pulo CHAVE 4 (não usada)
+				new Word(Opcode.LDI, 3, -1, 25), // Posicao para pulo CHAVE 4 (nao usada)
 				new Word(Opcode.STD, 3, -1, 96),
 				new Word(Opcode.LDI, 6, -1, 0), // r6 = r7 - 1 POS 22
 				new Word(Opcode.ADD, 6, 7, -1),
