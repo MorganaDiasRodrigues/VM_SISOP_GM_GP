@@ -1,11 +1,6 @@
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
-import java.util.Scanner;
-
+import java.util.*;
+import java.util.concurrent.Semaphore;
 // PUCRS - Escola Politécnica - Sistemas Operacionais
 // Prof. Fernando Dotti
 // Código fornecido como parte da soluçao do projeto de Sistemas Operacionais
@@ -74,7 +69,7 @@ public class Sistema {
 			for (int i = 0; i < tamMem; i++) {
 				m[i] = new Word(Opcode.___, -1, -1, -1);
 			}
-			;
+
 		}
 
 		public void dump(Word w) { // funcoes de DUMP nao existem em hardware - colocadas aqui para facilidade
@@ -385,13 +380,13 @@ public class Sistema {
 					pcb.setPC(pc);
 				}
 				scheduler.addCicle();
-				if (scheduler.isLimit()) { // mudei aqui
-					irpt = Interrupts.intBlocked; // mudei aqui
-					return false; // mudei aqui
+				if (scheduler.isLimit()) {
+					irpt = Interrupts.intBlocked;
+					return false;
 				}
 				if (irpt != Interrupts.noInterrupt) { // existe interrupçao
 					ih.handle(irpt, pc); // desvia para rotina de tratamento
-					if (irpt == Interrupts.intSTOP) { // mudei aqui
+					if (irpt == Interrupts.intSTOP) {
 						return true; // Retorna true para indicar que o processo terminou corretamente // mudei aqui
 					}
 					break; // break sai do loop da cpu
@@ -793,13 +788,17 @@ public class Sistema {
 	}
 
 	public class GP {
-		private GM gm;
-		private Queue<PCB> filaProntos;
+		private final GM gm;
+		private final Queue<PCB> filaProntos;
+		private final Queue<PCB> filaBloqueados;
+		private final Queue<PCB> filaRodando;
 		private int processID;
 
 		public GP(GM gm) {
 			this.gm = gm;
 			this.filaProntos = new LinkedList<>();
+			this.filaBloqueados = new LinkedList<>();
+			this.filaRodando = new LinkedList<>();
 			this.processID = 0;
 		}
 
@@ -880,6 +879,12 @@ public class Sistema {
 			System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
 		}
 	}
+
+	// ------------------- C R I A C A O  D E  T H R E A D - rotinas de tratamento
+
+
+
+
 
 	// ------------------- C H A M A D A S D E S I S T E M A - rotinas de tratamento
 	// ----------------------
@@ -1067,7 +1072,7 @@ public class Sistema {
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
 						s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
-						s.vm.cpu.run_without_scheduler();
+						s.vm.cpu.run_without_scheduler(); //temos que mudar isso depois para rodar com o scheduler
 						break;
 					}
 				}
@@ -1079,9 +1084,10 @@ public class Sistema {
 					System.out.println("Executando o programa " + pcb.getId());
 					s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC()); // Configura o contexto da CPU para o processo
 					if (!s.vm.cpu.run(s.scheduler, pcb)) { // Executa o processo e verifica se foi bloqueado
+						s.gp.filaBloqueados.add(pcb); // Se bloqueado, adiciona o processo de volta à fila de bloqueados
 						s.gp.filaProntos.add(pcb); // Se bloqueado, adiciona o processo de volta à fila de prontos
 					} else {
-						System.out.println("Processo com ID " + pcb.getId() + " finalizado."); // Adicionei esta linha // mudei aqui
+						System.out.println("Processo com ID " + pcb.getId() + " finalizado.");
 						s.gp.desalocaProcesso(pcb.getId()); // Se finalizado, desaloca o processo
 					}
 					s.scheduler.resetCicles(); // Reseta os ciclos do escalonador
