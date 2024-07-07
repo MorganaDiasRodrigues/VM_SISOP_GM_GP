@@ -1,16 +1,29 @@
-
 import java.util.*;
-import java.util.concurrent.Semaphore;
-// PUCRS - Escola Politécnica - Sistemas Operacionais
-// Prof. Fernando Dotti
-// Código fornecido como parte da soluçao do projeto de Sistemas Operacionais
-//
-// VM
-//    HW = memória, cpu
-//    SW = tratamento int e chamada de sistema
-// Funcionalidades de carga, execuçao e dump de memória
+import java.util.concurrent.*;
 
-public class Sistema {
+public class SistemaV2 {
+
+	public static void main(String[] args) {
+		SistemaV2 sistema = new SistemaV2(1024, 8);
+		sistema.start();
+	}
+
+	// Funcao auxiliar para nao repetir os comandos no terminal
+	public void help() {
+		System.out.println("\n ---- COMANDOS DISPONIVEIS ----:\n" +
+				"new <nomeDePrograma>: cria um processo na memória\n" +
+				"rm <id>: retira o processo id do sistema, tenha ele executado ou nao\n" +
+				"ps: lista todos processos existentes\n" +
+				"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
+				"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
+				"executa <id>: executa o processo com id fornecido. Se nao houver processo, retorna erro.\n" +
+				"traceOn: liga modo de execuçao em que a CPU imprime cada instruçao executada\n" +
+				"traceOff: desliga o modo acima\n" +
+				"exit: sai do sistema\n" +
+				"help: repete os comandos disponiveis\n" +
+				"---------------------------------------------------------------------------\n" +
+				"Digite um comando: ");
+	}
 
 	// -------------------------------------------------------------------------------------------------------
 	// --------------------- H A R D W A R E - definicoes de HW
@@ -20,26 +33,29 @@ public class Sistema {
 	// --------------------- M E M O R I A - definicoes de palavra de memoria,
 	// memória ----------------------
 
-	public class Scheduler {
-		// Implement RoundRobin
-		public int ciclesLimit;
-		public int processCurrentCicles = 0;
+	public class Scheduler implements Runnable {
+		private int ciclesLimit;
+		private int processCurrentCicles = 0;
+		private Queue<PCB> readyQueue = new LinkedList<>();
+		private Queue<PCB> blockedQueue = new LinkedList<>();
+		private Semaphore semCPU, semScheduler;
 
-		public Scheduler(int ciclesLimit) {
+		public Scheduler(int ciclesLimit, Semaphore semCPU, Semaphore semScheduler) {
 			this.ciclesLimit = ciclesLimit;
+			this.semCPU = semCPU;
+			this.semScheduler = semScheduler;
 		}
 
-		public Queue<Process> addProcess(Queue<Process> processList, Process p) {
-			processList.add(p);
-			return processList;
+		public void addProcess(PCB p) {
+			readyQueue.add(p);
 		}
 
-		public Process getNextProcess(Queue<Process> processList) {
-			return processList.poll();
+		public PCB getNextProcess() {
+			return readyQueue.poll();
 		}
 
-		public boolean isEmpty(Queue<Process> processList) {
-			return processList.isEmpty();
+		public boolean isEmpty() {
+			return readyQueue.isEmpty();
 		}
 
 		public void addCicle() {
@@ -57,6 +73,21 @@ public class Sistema {
 		public void resetCicles() {
 			this.processCurrentCicles = 0;
 		}
+
+		@Override
+		public void run() {
+			while (true) {
+				try {
+					semScheduler.acquire();
+					if (!readyQueue.isEmpty()) {
+						PCB pcb = getNextProcess();
+						semCPU.release();
+					}
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 	}
 
 	public class Memory {
@@ -69,7 +100,6 @@ public class Sistema {
 			for (int i = 0; i < tamMem; i++) {
 				m[i] = new Word(Opcode.___, -1, -1, -1);
 			}
-
 		}
 
 		public void dump(Word w) { // funcoes de DUMP nao existem em hardware - colocadas aqui para facilidade
@@ -93,8 +123,6 @@ public class Sistema {
 		}
 	}
 
-	// -------------------------------------------------------------------------------------------------------
-
 	public class Word { // cada posicao da memoria tem uma instrucao (ou um dado)
 		public Opcode opc; //
 		public int r1; // indice do primeiro registrador da operacao (Rs ou Rd cfe opcode na tabela)
@@ -109,10 +137,6 @@ public class Sistema {
 		}
 	}
 
-	// -------------------------------------------------------------------------------------------------------
-	// --------------------- C P U - definicoes da CPU
-	// -----------------------------------------------------
-
 	public enum Opcode {
 		DATA, ___, // se memoria nesta posicao tem um dado, usa DATA, se nao usada ee NULO ___
 		JMP, JMPI, JMPIG, JMPIL, JMPIE, // desvios e parada
@@ -124,255 +148,213 @@ public class Sistema {
 	}
 
 	public enum Interrupts { // possiveis interrupcoes que esta CPU gera
-		noInterrupt, intEnderecoInvalido, intInstrucaoInvalida, intOverflow, intSTOP, intBlocked;
+		noInterrupt, intEnderecoInvalido, intInstrucaoInvalida, intOverflow, intSTOP, intBlocked, intIO;
 	}
 
-	public class CPU {
+	public class CPU implements Runnable {
 		private int maxInt; // valores maximo e minimo para inteiros nesta cpu
 		private int minInt;
-		// característica do processador: contexto da CPU ...
-		private int pc; // ... composto de program counter,
-		private Word ir; // instruction register,
+		private int pc; // program counter
+		private Word ir; // instruction register
 		private int[] reg; // registradores da CPU
-		private Interrupts irpt; // durante instrucao, interrupcao pode ser sinalizada
-		private int base; // base e limite de acesso na memoria
-		private int limite; // por enquanto toda memoria pode ser acessada pelo processo rodando
-							// ATE AQUI: contexto da CPU - tudo que precisa sobre o estado de um processo
-							// para executa-lo
-							// nas proximas versoes isto pode modificar
+		private Interrupts irpt; // interrupção registrada
+		private int base; // base de acesso na memoria
+		private int limite; // limite de acesso na memoria
+		private Memory mem; // memória
+		private Word[] m; // referência à memória
+		private InterruptHandling ih; // tratamento de interrupções
+		private SysCallHandling sysCall; // tratamento de chamadas de sistema
+		private boolean debug; // debug mode
+		private Scheduler scheduler;
+		private Semaphore semCPU, semScheduler;
 
-		private Memory mem; // mem tem funcoes de dump e o array m de memória 'fisica'
-		private Word[] m; // CPU acessa MEMORIA, guarda referencia a 'm'. m nao muda. semre será um array
-							// de palavras
-
-		private InterruptHandling ih; // significa desvio para rotinas de tratamento de Int - se int ligada, desvia
-		private SysCallHandling sysCall; // significa desvio para tratamento de chamadas de sistema - trap
-		private boolean debug; // se true entao mostra cada instrucao em execucao
-
-		public CPU(Memory _mem, InterruptHandling _ih, SysCallHandling _sysCall, boolean _debug) { // ref a MEMORIA e
-																									// interrupt handler
-																									// passada na
-																									// criacao da CPU
-			maxInt = 32767; // capacidade de representacao modelada
-			minInt = -32767; // se exceder deve gerar interrupcao de overflow
-			mem = _mem; // usa mem para acessar funcoes auxiliares (dump)
-			m = mem.m; // usa o atributo 'm' para acessar a memoria.
-			reg = new int[10]; // aloca o espaço dos registradores - regs 8 e 9 usados somente para IO
-			ih = _ih; // aponta para rotinas de tratamento de int
-			sysCall = _sysCall; // aponta para rotinas de tratamento de chamadas de sistema
-			debug = _debug; // se true, print da instrucao em execucao
+		public CPU(Memory _mem, InterruptHandling _ih, SysCallHandling _sysCall, Scheduler _scheduler, Semaphore _semCPU, Semaphore _semScheduler, boolean _debug) {
+			maxInt = 32767;
+			minInt = -32767;
+			mem = _mem;
+			m = mem.m;
+			reg = new int[10];
+			ih = _ih;
+			sysCall = _sysCall;
+			scheduler = _scheduler;
+			semCPU = _semCPU;
+			semScheduler = _semScheduler;
+			debug = _debug;
 		}
 
-		private boolean legal(int e) { // todo acesso a memoria tem que ser verificado
-			// ????
+		private boolean legal(int e) {
 			return true;
 		}
 
-		private boolean testOverflow(int v) { // toda operacao matematica deve avaliar se ocorre overflow
+		private boolean testOverflow(int v) {
 			if ((v < minInt) || (v > maxInt)) {
 				irpt = Interrupts.intOverflow;
 				return false;
 			}
-			;
 			return true;
 		}
 
-		public void setContext(int _base, int _limite, int _pc) { // no futuro esta funcao vai ter que ser
-			base = _base; // expandida para setar todo contexto de execucao,
-			limite = _limite; // agora, setamos somente os registradores base,
-			pc = _pc; // limite e pc (deve ser zero nesta versao)
-			irpt = Interrupts.noInterrupt; // reset da interrupcao registrada
+		public void setContext(int _base, int _limite, int _pc) {
+			base = _base;
+			limite = _limite;
+			pc = _pc;
+			irpt = Interrupts.noInterrupt;
 		}
 
-		public boolean run(Scheduler scheduler, PCB pcb) { // execucao da CPU supoe que o contexto da CPU, vide acima,
-			while (true) { // ciclo de instrucoes. acaba cfe instrucao, veja cada caso.
-				if (legal(pc)) { // pc valido
-					ir = m[pc]; // <<<<<<<<<<<< busca posicao da memoria apontada por pc, guarda em ir
+		public boolean run(Scheduler scheduler, PCB pcb) {
+			while (true) {
+				if (legal(pc)) {
+					ir = m[pc];
 					if (debug) {
 						System.out.println("                               pc: " + pc + "       exec: ");
 						mem.dump(ir);
 					}
-					// --------------------------------------------------------------------------------------------------
-					// EXECUTA INSTRUCAO NO ir
-					switch (ir.opc) { // conforme o opcode (código de operaçao) executa
-		
-						// Instrucoes de Busca e Armazenamento em Memoria
-						case LDI: // Rd ← k
+					switch (ir.opc) {
+						case LDI:
 							reg[ir.r1] = ir.p;
 							pc++;
 							break;
-		
-						case LDD: // Rd <- [A]
+						case LDD:
 							if (legal(ir.p)) {
 								reg[ir.r1] = m[ir.p].p;
 								pc++;
 							}
 							break;
-		
-						case LDX: // RD <- [RS]
+						case LDX:
 							if (legal(reg[ir.r2])) {
 								reg[ir.r1] = m[reg[ir.r2]].p;
 								pc++;
 							}
 							break;
-		
-						case STD: // [A] ← Rs
+						case STD:
 							if (legal(ir.p)) {
 								m[ir.p].opc = Opcode.DATA;
 								m[ir.p].p = reg[ir.r1];
 								pc++;
 							}
 							break;
-		
-						case STX: // [Rd] ←Rs
+						case STX:
 							if (legal(reg[ir.r1])) {
 								m[reg[ir.r1]].opc = Opcode.DATA;
 								m[reg[ir.r1]].p = reg[ir.r2];
 								pc++;
 							}
 							break;
-		
-						case MOVE: // RD <- RS
+						case MOVE:
 							reg[ir.r1] = reg[ir.r2];
 							pc++;
 							break;
-		
-						// Instrucoes Aritmeticas
-						case ADD: // Rd ← Rd + Rs
+						case ADD:
 							reg[ir.r1] = reg[ir.r1] + reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-		
-						case ADDI: // Rd ← Rd + k
+						case ADDI:
 							reg[ir.r1] = reg[ir.r1] + ir.p;
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-		
-						case SUB: // Rd ← Rd - Rs
+						case SUB:
 							reg[ir.r1] = reg[ir.r1] - reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-		
-						case SUBI: // RD <- RD - k
+						case SUBI:
 							reg[ir.r1] = reg[ir.r1] - ir.p;
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-		
-						case MULT: // Rd <- Rd * Rs
+						case MULT:
 							reg[ir.r1] = reg[ir.r1] * reg[ir.r2];
 							testOverflow(reg[ir.r1]);
 							pc++;
 							break;
-		
-						// Instrucoes JUMP
-						case JMP: // PC <- k
+						case JMP:
 							pc = ir.p;
 							break;
-		
-						case JMPIG: // If Rc > 0 Then PC ← Rs Else PC ← PC +1
+						case JMPIG:
 							if (reg[ir.r2] > 0) {
 								pc = reg[ir.r1];
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIGK: // If RC > 0 then PC <- k else PC++
+						case JMPIGK:
 							if (reg[ir.r2] > 0) {
 								pc = ir.p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPILK: // If RC < 0 then PC <- k else PC++
+						case JMPILK:
 							if (reg[ir.r2] < 0) {
 								pc = ir.p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIEK: // If RC = 0 then PC <- k else PC++
+						case JMPIEK:
 							if (reg[ir.r2] == 0) {
 								pc = ir.p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIL: // if Rc < 0 then PC ← Rs Else PC ← PC +1
+						case JMPIL:
 							if (reg[ir.r2] < 0) {
 								pc = reg[ir.r1];
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIE: // If Rc = 0 Then PC ← Rs Else PC ← PC +1
+						case JMPIE:
 							if (reg[ir.r2] == 0) {
 								pc = reg[ir.r1];
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIM: // PC ← [A]
+						case JMPIM:
 							pc = m[ir.p].p;
 							break;
-		
-						case JMPIGM: // If RC > 0 then PC ← [A] else PC++
+						case JMPIGM:
 							if (reg[ir.r2] > 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPILM: // If RC < 0 then PC ← k else PC++
+						case JMPILM:
 							if (reg[ir.r2] < 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIEM: // If RC = 0 then PC ← k else PC++
+						case JMPIEM:
 							if (reg[ir.r2] == 0) {
 								pc = m[ir.p].p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						case JMPIGT: // If RS>RC then PC ← k else PC++
+						case JMPIGT:
 							if (reg[ir.r1] > reg[ir.r2]) {
 								pc = ir.p;
 							} else {
 								pc++;
 							}
 							break;
-		
-						// outras
-						case STOP: // por enquanto, para execucao
+						case STOP:
 							irpt = Interrupts.intSTOP;
 							break;
-		
 						case DATA:
 							irpt = Interrupts.intInstrucaoInvalida;
 							break;
-		
-						// Chamada de sistema
 						case TRAP:
-							sysCall.handle(); // <<<<< aqui desvia para rotina de chamada de sistema, no momento so temos IO
+							sysCall.handle();
 							pc++;
 							break;
-		
-						// Inexistente
 						default:
 							irpt = Interrupts.intInstrucaoInvalida;
 							break;
@@ -384,256 +366,41 @@ public class Sistema {
 					irpt = Interrupts.intBlocked;
 					return false;
 				}
-				if (irpt != Interrupts.noInterrupt) { // existe interrupçao
-					ih.handle(irpt, pc); // desvia para rotina de tratamento
+				if (irpt != Interrupts.noInterrupt) {
+					ih.handle(irpt, pc);
 					if (irpt == Interrupts.intSTOP) {
-						return true; // Retorna true para indicar que o processo terminou corretamente // mudei aqui
+						return true;
+					} else if (irpt == Interrupts.intIO) {
+						irpt = Interrupts.noInterrupt; // Reseta a interrupção de I/O
 					}
-					break; // break sai do loop da cpu
+					break;
 				}
-			} // FIM DO CICLO DE UMA INSTRUÇAO
+			}
 			return true;
 		}
-		
 
-		public void run_without_scheduler() { // execucao da CPU supoe que o contexto da CPU, vide acima, esta
-												// devidamente
-			// setado
-			while (true) { // ciclo de instrucoes. acaba cfe instrucao, veja cada caso.
-				// --------------------------------------------------------------------------------------------------
-				// FETCH
-				if (legal(pc)) { // pc valido
-					ir = m[pc]; // <<<<<<<<<<<< busca posicao da memoria apontada por pc, guarda em ir
-					if (debug) {
-						System.out.print("                               pc: " + pc + "       exec: ");
-						mem.dump(ir);
+		@Override
+		public void run() {
+			while (true) {
+				try {
+					semCPU.acquire();
+					while (true) {
+						if (scheduler.isEmpty()) {
+							semScheduler.release();
+							break;
+						}
+						PCB pcb = scheduler.getNextProcess();
+						setContext(0, mem.tamMem - 1, pcb.getPC());
+						if (!run(scheduler, pcb)) {
+							scheduler.addProcess(pcb);
+						}
 					}
-					// --------------------------------------------------------------------------------------------------
-					// EXECUTA INSTRUCAO NO ir
-					switch (ir.opc) { // conforme o opcode (código de operaçao) executa
-
-						// Instrucoes de Busca e Armazenamento em Memoria
-						case LDI: // Rd ← k
-							reg[ir.r1] = ir.p;
-							pc++;
-							break;
-
-						case LDD: // Rd <- [A]
-							if (legal(ir.p)) {
-								reg[ir.r1] = m[ir.p].p;
-								pc++;
-							}
-							break;
-
-						case LDX: // RD <- [RS] // NOVA
-							if (legal(reg[ir.r2])) {
-								reg[ir.r1] = m[reg[ir.r2]].p;
-								pc++;
-							}
-							break;
-
-						case STD: // [A] ← Rs
-							if (legal(ir.p)) {
-								m[ir.p].opc = Opcode.DATA;
-								m[ir.p].p = reg[ir.r1];
-								pc++;
-							}
-							;
-							break;
-
-						case STX: // [Rd] ←Rs
-							if (legal(reg[ir.r1])) {
-								m[reg[ir.r1]].opc = Opcode.DATA;
-								m[reg[ir.r1]].p = reg[ir.r2];
-								pc++;
-							}
-							;
-							break;
-
-						case MOVE: // RD <- RS
-							reg[ir.r1] = reg[ir.r2];
-							pc++;
-							break;
-
-						// Instrucoes Aritmeticas
-						case ADD: // Rd ← Rd + Rs
-							reg[ir.r1] = reg[ir.r1] + reg[ir.r2];
-							testOverflow(reg[ir.r1]);
-							pc++;
-							break;
-
-						case ADDI: // Rd ← Rd + k
-							reg[ir.r1] = reg[ir.r1] + ir.p;
-							testOverflow(reg[ir.r1]);
-							pc++;
-							break;
-
-						case SUB: // Rd ← Rd - Rs
-							reg[ir.r1] = reg[ir.r1] - reg[ir.r2];
-							testOverflow(reg[ir.r1]);
-							pc++;
-							break;
-
-						case SUBI: // RD <- RD - k // NOVA
-							reg[ir.r1] = reg[ir.r1] - ir.p;
-							testOverflow(reg[ir.r1]);
-							pc++;
-							break;
-
-						case MULT: // Rd <- Rd * Rs
-							reg[ir.r1] = reg[ir.r1] * reg[ir.r2];
-							testOverflow(reg[ir.r1]);
-							pc++;
-							break;
-
-						// Instrucoes JUMP
-						case JMP: // PC <- k
-							pc = ir.p;
-							break;
-
-						case JMPIG: // If Rc > 0 Then PC ← Rs Else PC ← PC +1
-							if (reg[ir.r2] > 0) {
-								pc = reg[ir.r1];
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIGK: // If RC > 0 then PC <- k else PC++
-							if (reg[ir.r2] > 0) {
-								pc = ir.p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPILK: // If RC < 0 then PC <- k else PC++
-							if (reg[ir.r2] < 0) {
-								pc = ir.p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIEK: // If RC = 0 then PC <- k else PC++
-							if (reg[ir.r2] == 0) {
-								pc = ir.p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIL: // if Rc < 0 then PC <- Rs Else PC <- PC +1
-							if (reg[ir.r2] < 0) {
-								pc = reg[ir.r1];
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIE: // If Rc = 0 Then PC <- Rs Else PC <- PC +1
-							if (reg[ir.r2] == 0) {
-								pc = reg[ir.r1];
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIM: // PC <- [A]
-							pc = m[ir.p].p;
-							break;
-
-						case JMPIGM: // If RC > 0 then PC <- [A] else PC++
-							if (reg[ir.r2] > 0) {
-								pc = m[ir.p].p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPILM: // If RC < 0 then PC <- k else PC++
-							if (reg[ir.r2] < 0) {
-								pc = m[ir.p].p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIEM: // If RC = 0 then PC <- k else PC++
-							if (reg[ir.r2] == 0) {
-								pc = m[ir.p].p;
-							} else {
-								pc++;
-							}
-							break;
-
-						case JMPIGT: // If RS>RC then PC <- k else PC++
-							if (reg[ir.r1] > reg[ir.r2]) {
-								pc = ir.p;
-							} else {
-								pc++;
-							}
-							break;
-
-						// outras
-						case STOP: // por enquanto, para execucao
-							irpt = Interrupts.intSTOP;
-							break;
-
-						case DATA:
-							irpt = Interrupts.intInstrucaoInvalida;
-							break;
-
-						// Chamada de sistema
-						case TRAP:
-							sysCall.handle(); // <<<<< aqui desvia para rotina de chamada de sistema, no momento so
-												// temos IO
-							pc++;
-							break;
-
-						// Inexistente
-						default:
-							irpt = Interrupts.intInstrucaoInvalida;
-							break;
-					}
+				} catch (InterruptedException e) {
+					e.printStackTrace();
 				}
-				// --------------------------------------------------------------------------------------------------
-				// VERIFICA INTERRUPÇaO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
-				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupçao
-					ih.handle(irpt, pc); // desvia para rotina de tratamento
-					break; // break sai do loop da cpu
-				}
-			} // FIM DO CICLO DE UMA INSTRUÇaO
+			}
 		}
 	}
-	// ------------------ C P U - fim
-	// ------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-
-	// ------------------- V M - constituida de CPU e MEMORIA
-	// -----------------------------------------------
-	// -------------------------- atributos e construcao da VM
-	// -----------------------------------------------
-	public class VM {
-		public int tamMem;
-		public Word[] m;
-		public Memory mem;
-		public CPU cpu;
-
-		public VM(int tamanhoMemoria, InterruptHandling ih, SysCallHandling sysCall) {
-			// vm deve ser configurada com endereço de tratamento de interrupcoes e de
-			// chamadas de sistema
-			// cria memória
-			tamMem = tamanhoMemoria;
-			mem = new Memory(tamMem);
-			m = mem.m;
-			// cria cpu
-			cpu = new CPU(mem, ih, sysCall, true); // true liga debug
-		}
-	}
-	// ------------------- V M - fim
-	// ------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
 
 	public class TabelaPaginas {
 		private List<Integer> tabelaPagina;
@@ -643,34 +410,27 @@ public class Sistema {
 		}
 
 		public boolean isFrameLivre(int index) {
-			// Verifica se o índice é válido e se o frame está livre
 			return index >= 0 && index < tabelaPagina.size() && tabelaPagina.get(index) == -1;
 		}
 
 		public void alocaFrame(int frameIndex) {
 			if (frameIndex >= 0 && frameIndex < tabelaPagina.size()) {
-				tabelaPagina.set(frameIndex, 1); // Assume 1 como valor de frame alocado
+				tabelaPagina.set(frameIndex, 1);
 			}
 		}
 
 		public void liberaFrame(int frameIndex) {
 			if (frameIndex >= 0 && frameIndex < tabelaPagina.size()) {
-				tabelaPagina.set(frameIndex, -1); // -1 indica que o frame está livre
+				tabelaPagina.set(frameIndex, -1);
 			}
 		}
-
 	}
 
-	// GERENCIADOR DE MEMORIA (GM)
-	// ----------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-	// Tamanho da página == tamanho do frame | Se tamMem=1024 e tamPg=8 teremos 128
-	// frames.
 	public class GM {
-		private Word[] m; // m representa a memória fisica: um array de posicoes de memoria (word)
+		private Word[] m;
 		private int tamPg;
 		private int numeroFrames;
-		private TabelaPaginas tabelaPaginas;;
+		private TabelaPaginas tabelaPaginas;
 		public int[] framesAlocados;
 
 		public GM(Word[] m, int tamPg) {
@@ -749,11 +509,9 @@ public class Sistema {
 				System.out.println("No frames were allocated or provided for deallocation.");
 			}
 		}
-
 	}
 
 	public class PCB {
-
 		private int id;
 		private int tamPrograma;
 		private List<Integer> framesAlocados;
@@ -784,21 +542,18 @@ public class Sistema {
 		public int getTamPrograma() {
 			return this.tamPrograma;
 		}
-
 	}
 
 	public class GP {
 		private final GM gm;
 		private final Queue<PCB> filaProntos;
 		private final Queue<PCB> filaBloqueados;
-		private final Queue<PCB> filaRodando;
 		private int processID;
 
 		public GP(GM gm) {
 			this.gm = gm;
 			this.filaProntos = new LinkedList<>();
 			this.filaBloqueados = new LinkedList<>();
-			this.filaRodando = new LinkedList<>();
 			this.processID = 0;
 		}
 
@@ -857,37 +612,32 @@ public class Sistema {
 			return -1;
 		}
 
+		public Queue<PCB> getFilaProntos() {
+			return filaProntos;
+		}
 	}
 
-	// --------------------H A R D W A R E - fim
-	// -------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
+	// ------------------- V M - constituida de CPU e MEMORIA
+	public class VM {
+		public int tamMem;
+		public Word[] m;
+		public Memory mem;
+		public CPU cpu;
 
-	// -------------------------------------------------------------------------------------------------------
+		public VM(int tamanhoMemoria, InterruptHandling ih, SysCallHandling sysCall, Scheduler scheduler, Semaphore semCPU, Semaphore semScheduler) {
+			tamMem = tamanhoMemoria;
+			mem = new Memory(tamMem);
+			m = mem.m;
+			cpu = new CPU(mem, ih, sysCall, scheduler, semCPU, semScheduler, true);
+		}
+	}
 
-	// -------------------------------------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-	// ------------------- S O F T W A R E - inicio
-	// ----------------------------------------------------------
-
-	// ------------------- I N T E R R U P C O E S - rotinas de tratamento
-	// ----------------------------------
 	public class InterruptHandling {
-		public void handle(Interrupts irpt, int pc) { // apenas avisa - todas interrupcoes neste momento finalizam o
-														// programa
+		public void handle(Interrupts irpt, int pc) {
 			System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
 		}
 	}
 
-	// ------------------- C R I A C A O  D E  T H R E A D - rotinas de tratamento
-
-
-
-
-
-	// ------------------- C H A M A D A S D E S I S T E M A - rotinas de tratamento
-	// ----------------------
 	public class SysCallHandling {
 		private VM vm;
 
@@ -895,21 +645,11 @@ public class Sistema {
 			vm = _vm;
 		}
 
-		public void handle() { // apenas avisa - todas interrupcoes neste momento finalizam o programa
-			System.out.println("                                               Chamada de Sistema com op  /  par:  "
+		public void handle() {
+			System.out.println("                                               Chamada de SistemaV2 com op  /  par:  "
 					+ vm.cpu.reg[8] + " / " + vm.cpu.reg[9]);
 		}
 	}
-
-	// # o criaremos o gerente de memória implementando paginaçao.
-
-	// ------------------ U T I L I T A R I O S D O S I S T E M A
-	// -----------------------------------------
-	// ------------------ load é invocado a partir de requisiçao do usuário
-
-	// -------------------------------------------------------------------------------------------------------
-	// ------------------- S I S T E M A
-	// --------------------------------------------------------------------
 
 	public VM vm;
 	public InterruptHandling ih;
@@ -918,23 +658,27 @@ public class Sistema {
 	public GM gm;
 	public GP gp;
 	public Scheduler scheduler;
+	public Semaphore semCPU, semScheduler;
+	public BlockingQueue<Integer> ioQueue;
 
-	public Sistema(int tamanhoMemoria, int tamanhoPg) { // a VM com tratamento de interrupções
+	public SistemaV2(int tamanhoMemoria, int tamanhoPg) {
 		ih = new InterruptHandling();
 		sysCall = new SysCallHandling();
-		vm = new VM(tamanhoMemoria, ih, sysCall);
+		semCPU = new Semaphore(0);
+		semScheduler = new Semaphore(1);
+		scheduler = new Scheduler(4, semCPU, semScheduler);
+		vm = new VM(tamanhoMemoria, ih, sysCall, scheduler, semCPU, semScheduler);
 		sysCall.setVM(vm);
 		progs = new Programas();
 		gm = new GM(vm.m, tamanhoPg);
 		gp = new GP(gm);
-		scheduler = new Scheduler(4);
+		ioQueue = new LinkedBlockingQueue<>();
 	}
 
 	public int createNewProcess(Word[] programa) {
-
 		if (programa == null) {
 			System.out.println("Programa nao encontrado.");
-			return -1; // Retorna -1 para indicar que o programa nao foi encontrado
+			return -1;
 		}
 
 		if (gp.criaProcesso(programa)) {
@@ -944,188 +688,180 @@ public class Sistema {
 		}
 	}
 
-	// ------------------- S I S T E M A - fim
-	// --------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
+	public void start() {
+		Thread shellThread = new Thread(new ThreadShell(this));
+		Thread cpuThread = new Thread(vm.cpu);
+		Thread schedulerThread = new Thread(scheduler);
+		Thread ioThread = new Thread(new IODevice(this));
 
-	// -------------------------------------------------------------------------------------------------------
-	// ------------------- instancia e testa sistema
-	// public static void main(String args[]) {
-	// Sistema s = new Sistema(1024, 8);
-	// System.out.println("Tamanho da memória: " + s.vm.tamMem);
-	// System.out.println("Tamanho da página: " + s.gm.tamPg);
-	// System.out.println("Número de frames: " + s.gm.numeroFrames);
-	// s.loadAndExec(progs.fibonacci10);
-	// s.loadAndExec(progs.progMinimo);
-	// s.loadAndExec(progs.fatorial);
-	// //s.loadAndExec(progs.fatorialTRAP); // saida
-	// //s.loadAndExec(progs.fibonacciTRAP); // entrada
-	// // s.loadAndExec(progs.PC); // bubble sort
+		shellThread.start();
+		cpuThread.start();
+		schedulerThread.start();
+		ioThread.start();
+	}
 
-	// Funcao auxiliar para nao repetir os comandos no terminal
-	public void help() {
-		System.out.println("\n ---- COMANDOS DISPONIVEIS ----:\n" +
-				"new <nomeDePrograma>: cria um processo na memória\n" +
-				"rm <id>: retira o processo id do sistema, tenha ele executado ou nao\n" +
-				"ps: lista todos processos existentes\n" +
-				"dump <id>: lista o conteúdo do PCB e o conteúdo da memória do processo com id\n" +
-				"dumpM <inicio, fim>: lista a memória entre posições início e fim, independente do processo\n" +
-				"executa <id>: executa o processo com id fornecido. Se nao houver processo, retorna erro.\n" +
-				"traceOn: liga modo de execuçao em que a CPU imprime cada instruçao executada\n" +
-				"traceOff: desliga o modo acima\n" +
-				"exit: sai do sistema\n" +
-				"help: repete os comandos disponiveis\n" +
-				"---------------------------------------------------------------------------\n" +
-				"Digite um comando: ");
+	public class ThreadShell implements Runnable {
+		private final SistemaV2 sistema;
+
+		public ThreadShell(SistemaV2 sistema) {
+			this.sistema = sistema;
 		}
-	// SISTEMA INTERATIVO
-	public static void main(String[] args) {
-		Sistema s = new Sistema(1024, 8);
-		Scanner scanner = new Scanner(System.in);
-		s.help(); //printa os comandos de ajuda 
-		while (true) {
 
-			String command = scanner.nextLine();
-			if(command.equals("help")){
-				s.help();
-			}
-
-			if (command.equals("exit")) {
-				break;
-			}
-
-			// Se comando começa com "new"
-			if (command.startsWith("new")) {
-				String[] commandParts = command.split(" ");
-				String programaNome = commandParts[1];
-				switch (programaNome) {
-					case "fatorial" -> s.createNewProcess(progs.fatorial);
-					case "fibonacci10" -> s.createNewProcess(progs.fibonacci10);
-					case "progMinimo" -> s.createNewProcess(progs.progMinimo);
-					case "fatorialTRAP" -> s.createNewProcess(progs.fatorialTRAP);
-					case "PB" -> s.createNewProcess(progs.PB);
-					case "PC" -> s.createNewProcess(progs.PC);
-					case "fibonacciTRAP" -> s.createNewProcess(progs.fibonacciTRAP);
-					default -> System.out.println("Programa '" + programaNome + "' nao encontrado.");
-				}
-			}
-
-			// Se comando começa com "rm"
-			if (command.startsWith("rm")) {
-				String[] commandParts = command.split(" ");
-				int id = Integer.parseInt(commandParts[1]);
-				s.gp.desalocaProcesso(id);
-			}
-
-			if (command.equals("ps")) {
-				if (s.gp.filaProntos.isEmpty()) {
-					System.out.println("\n");
-					System.out.println("Nao ha processos na fila de prontos.");
-				} else {
-					System.out.println("\n");
-					System.out.println("Processos prontos:");
-					for (PCB pcb : s.gp.filaProntos) {
-						System.out.println("ID: " + pcb.getId() + " - Tamanho do Programa: " + pcb.getTamPrograma());
-					}
-					System.out.println("\n");
-
+		@Override
+		public void run() {
+			Scanner scanner = new Scanner(System.in);
+			sistema.help();
+			while (true) {
+				String command = scanner.nextLine();
+				if (command.equals("help")) {
+					sistema.help();
 				}
 
-			}
+				if (command.equals("exit")) {
+					break;
+				}
 
-			// se comando for o dump <id>
-			if (command.startsWith("dump")) {
-				String[] commandParts = command.split(" ");
-				int id = Integer.parseInt(commandParts[1]);
-				for (PCB pcb : s.gp.filaProntos) {
-					if (pcb.getId() == id) {
-						System.out.println("\n");
-						System.out.println("PCB do processo " + id + ":");
-						System.out.println("ID: " + pcb.getId());
-						System.out.println("PC: " + pcb.getPC());
-						System.out.println("Tamanho do Programa: " + pcb.getTamPrograma());
-						System.out.println("Frames alocados " + pcb.getFramesAlocados());
-						System.out.println("Conteúdo da memória do processo " + id + ":");
-						s.vm.mem.dump(0, pcb.getTamPrograma());
-						System.out.println("\n");
-						break;
+				if (command.startsWith("new")) {
+					String[] commandParts = command.split(" ");
+					String programaNome = commandParts[1];
+					switch (programaNome) {
+						case "fatorial" -> sistema.createNewProcess(progs.fatorial);
+						case "fibonacci10" -> sistema.createNewProcess(progs.fibonacci10);
+						case "progMinimo" -> sistema.createNewProcess(progs.progMinimo);
+						case "fatorialTRAP" -> sistema.createNewProcess(progs.fatorialTRAP);
+						case "PB" -> sistema.createNewProcess(progs.PB);
+						case "PC" -> sistema.createNewProcess(progs.PC);
+						case "fibonacciTRAP" -> sistema.createNewProcess(progs.fibonacciTRAP);
+						default -> System.out.println("Programa '" + programaNome + "' nao encontrado.");
 					}
 				}
-			}
 
-			// se for o dumpM <inicio, fim>
-			if (command.startsWith("dumpM")) {
-				String[] commandParts = command.split(" ");
-				int inicio = Integer.parseInt(commandParts[1]);
-				int fim = Integer.parseInt(commandParts[2]);
-				System.out.println("\n");
-				s.vm.mem.dump(inicio, fim);
-				System.out.println("\n");
-			}
-
-			if (command.startsWith("executa")) {
-				String[] commandParts = command.split(" ");
-				int id = Integer.parseInt(commandParts[1]);
-				if (s.gp.getProcessId(id) == -1) {
-					System.out.println("Processo com ID " + id + " nao encontrado.");
+				if (command.startsWith("rm")) {
+					String[] commandParts = command.split(" ");
+					int id = Integer.parseInt(commandParts[1]);
+					sistema.gp.desalocaProcesso(id);
 				}
-				for (PCB pcb : s.gp.filaProntos) {
-					if (pcb.getId() == id) {
-						s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
-						s.vm.cpu.run_without_scheduler(); //temos que mudar isso depois para rodar com o scheduler
-						break;
-					}
-				}
-			}
 
-			if (command.equals("execAll")) {
-				while (!s.gp.filaProntos.isEmpty()) { // Enquanto houver processos na fila de prontos
-					PCB pcb = s.gp.filaProntos.poll(); // Remove o primeiro processo da fila
-					System.out.println("Executando o programa " + pcb.getId());
-					s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC()); // Configura o contexto da CPU para o processo
-					if (!s.vm.cpu.run(s.scheduler, pcb)) { // Executa o processo e verifica se foi bloqueado
-						s.gp.filaBloqueados.add(pcb); // Se bloqueado, adiciona o processo de volta à fila de bloqueados
-						s.gp.filaProntos.add(pcb); // Se bloqueado, adiciona o processo de volta à fila de prontos
+				if (command.equals("ps")) {
+					if (sistema.gp.filaProntos.isEmpty()) {
+						System.out.println("\nNao ha processos na fila de prontos.");
 					} else {
-						System.out.println("Processo com ID " + pcb.getId() + " finalizado.");
-						s.gp.desalocaProcesso(pcb.getId()); // Se finalizado, desaloca o processo
+						System.out.println("\nProcessos prontos:");
+						for (PCB pcb : sistema.gp.filaProntos) {
+							System.out.println("ID: " + pcb.getId() + " - Tamanho do Programa: " + pcb.getTamPrograma());
+						}
+						System.out.println("\n");
 					}
-					s.scheduler.resetCicles(); // Reseta os ciclos do escalonador
 				}
-			}			
 
-			if (command.equals("traceOn")) {
-				s.vm.cpu.debug = true;
-			}
+				if (command.startsWith("dump")) {
+					String[] commandParts = command.split(" ");
+					int id = Integer.parseInt(commandParts[1]);
+					for (PCB pcb : sistema.gp.filaProntos) {
+						if (pcb.getId() == id) {
+							System.out.println("\nPCB do processo " + id + ":");
+							System.out.println("ID: " + pcb.getId());
+							System.out.println("PC: " + pcb.getPC());
+							System.out.println("Tamanho do Programa: " + pcb.getTamPrograma());
+							System.out.println("Frames alocados " + pcb.getFramesAlocados());
+							System.out.println("Conteúdo da memória do processo " + id + ":");
+							sistema.vm.mem.dump(0, pcb.getTamPrograma());
+							System.out.println("\n");
+							break;
+						}
+					}
+				}
 
-			if (command.equals("traceOff")) {
-				s.vm.cpu.debug = false;
+				if (command.startsWith("dumpM")) {
+					String[] commandParts = command.split(" ");
+					int inicio = Integer.parseInt(commandParts[1]);
+					int fim = Integer.parseInt(commandParts[2]);
+					System.out.println("\n");
+					sistema.vm.mem.dump(inicio, fim);
+					System.out.println("\n");
+				}
+
+				if (command.startsWith("executa")) {
+					String[] commandParts = command.split(" ");
+					int id = Integer.parseInt(commandParts[1]);
+					if (sistema.gp.getProcessId(id) == -1) {
+						System.out.println("Processo com ID " + id + " nao encontrado.");
+					}
+					for (PCB pcb : sistema.gp.filaProntos) {
+						if (pcb.getId() == id) {
+							sistema.vm.cpu.setContext(0, sistema.vm.tamMem - 1, pcb.getPC());
+							sistema.vm.cpu.run(scheduler, pcb);
+							break;
+						}
+					}
+				}
+
+				if (command.equals("execAll")) {
+					while (!sistema.gp.filaProntos.isEmpty()) {
+						PCB pcb = sistema.gp.filaProntos.poll();
+						System.out.println("Executando o programa " + pcb.getId());
+						sistema.vm.cpu.setContext(0, sistema.vm.tamMem - 1, pcb.getPC());
+						if (!sistema.vm.cpu.run(sistema.scheduler, pcb)) {
+							sistema.gp.filaBloqueados.add(pcb);
+							sistema.gp.filaProntos.add(pcb);
+						} else {
+							System.out.println("Processo com ID " + pcb.getId() + " finalizado.");
+							sistema.gp.desalocaProcesso(pcb.getId());
+						}
+						sistema.scheduler.resetCicles();
+					}
+				}
+
+				if (command.equals("traceOn")) {
+					sistema.vm.cpu.debug = true;
+				}
+
+				if (command.equals("traceOff")) {
+					sistema.vm.cpu.debug = false;
+				}
 			}
 		}
 	}
 
-	// -------------------------------------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-	// -------------------------------------------------------------------------------------------------------
-	// --------------- P R O G R A M A S - nao fazem parte do sistema
-	// esta classe representa programas armazenados (como se estivessem em disco)
-	// que podem ser carregados para a memória (load faz isto)
+	public class IODevice implements Runnable {
+		private final SistemaV2 sistema;
+
+		public IODevice(SistemaV2 sistema) {
+			this.sistema = sistema;
+		}
+
+		@Override
+		public void run() {
+			while (true) {
+				try {
+					int operation = sistema.ioQueue.take();
+					handleIO(operation);
+					sistema.vm.cpu.irpt = Interrupts.intIO;
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		private void handleIO(int operation) {
+			// Implementar a lógica de manipulação de I/O aqui
+			System.out.println("Manipulação de I/O: operação " + operation);
+		}
+	}
 
 	public class Programas {
 		public Word[] fatorial = new Word[] {
-				// este fatorial so aceita valores positivos. nao pode ser zero
-				// linha coment
-				new Word(Opcode.LDI, 0, -1, 4), // 0 r0 é valor a calcular fatorial
-				new Word(Opcode.LDI, 1, -1, 1), // 1 r1 é 1 para multiplicar (por r0)
-				new Word(Opcode.LDI, 6, -1, 1), // 2 r6 é 1 para ser o decremento
-				new Word(Opcode.LDI, 7, -1, 8), // 3 r7 tem posicao de stop do programa = 8
-				new Word(Opcode.JMPIE, 7, 0, 0), // 4 se r0=0 pula para r7(=8)
-				new Word(Opcode.MULT, 1, 0, -1), // 5 r1 = r1 * r0
-				new Word(Opcode.SUB, 0, 6, -1), // 6 decrementa r0 1
-				new Word(Opcode.JMP, -1, -1, 4), // 7 vai p posicao 4
-				new Word(Opcode.STD, 1, -1, 10), // 8 coloca valor de r1 na posiçao 10
-				new Word(Opcode.STOP, -1, -1, -1), // 9 stop
-				new Word(Opcode.DATA, -1, -1, -1) }; // 10 ao final o valor do fatorial estará na posiçao 10 da memória
+				new Word(Opcode.LDI, 0, -1, 4),
+				new Word(Opcode.LDI, 1, -1, 1),
+				new Word(Opcode.LDI, 6, -1, 1),
+				new Word(Opcode.LDI, 7, -1, 8),
+				new Word(Opcode.JMPIE, 7, 0, 0),
+				new Word(Opcode.MULT, 1, 0, -1),
+				new Word(Opcode.SUB, 0, 6, -1),
+				new Word(Opcode.JMP, -1, -1, 4),
+				new Word(Opcode.STD, 1, -1, 10),
+				new Word(Opcode.STOP, -1, -1, -1),
+				new Word(Opcode.DATA, -1, -1, -1) };
 
 		public Word[] progMinimo = new Word[] {
 				new Word(Opcode.LDI, 0, -1, 999),
@@ -1136,7 +872,7 @@ public class Sistema {
 				new Word(Opcode.STD, 0, -1, 14),
 				new Word(Opcode.STOP, -1, -1, -1) };
 
-		public Word[] fibonacci10 = new Word[] { // mesmo que prog exemplo, so que usa r0 no lugar de r8
+		public Word[] fibonacci10 = new Word[] {
 				new Word(Opcode.LDI, 1, -1, 0),
 				new Word(Opcode.STD, 1, -1, 20),
 				new Word(Opcode.LDI, 2, -1, 1),
@@ -1157,66 +893,63 @@ public class Sistema {
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1), // POS 20
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1) }; // ate aqui - serie de fibonacci ficara armazenada
+				new Word(Opcode.DATA, -1, -1, -1) };
 
 		public Word[] fatorialTRAP = new Word[] {
-				new Word(Opcode.LDI, 0, -1, 7), // numero para colocar na memoria
+				new Word(Opcode.LDI, 0, -1, 7),
 				new Word(Opcode.STD, 0, -1, 50),
 				new Word(Opcode.LDD, 0, -1, 50),
 				new Word(Opcode.LDI, 1, -1, -1),
-				new Word(Opcode.LDI, 2, -1, 13), // SALVAR POS STOP
-				new Word(Opcode.JMPIL, 2, 0, -1), // caso negativo pula pro STD
+				new Word(Opcode.LDI, 2, -1, 13),
+				new Word(Opcode.JMPIL, 2, 0, -1),
 				new Word(Opcode.LDI, 1, -1, 1),
 				new Word(Opcode.LDI, 6, -1, 1),
 				new Word(Opcode.LDI, 7, -1, 13),
-				new Word(Opcode.JMPIE, 7, 0, 0), // POS 9 pula pra STD (Stop-1)
+				new Word(Opcode.JMPIE, 7, 0, 0),
 				new Word(Opcode.MULT, 1, 0, -1),
 				new Word(Opcode.SUB, 0, 6, -1),
-				new Word(Opcode.JMP, -1, -1, 9), // pula para o JMPIE
+				new Word(Opcode.JMP, -1, -1, 9),
 				new Word(Opcode.STD, 1, -1, 18),
-				new Word(Opcode.LDI, 8, -1, 2), // escrita
-				new Word(Opcode.LDI, 9, -1, 18), // endereco com valor a escrever
+				new Word(Opcode.LDI, 8, -1, 2),
+				new Word(Opcode.LDI, 9, -1, 18),
 				new Word(Opcode.TRAP, -1, -1, -1),
-				new Word(Opcode.STOP, -1, -1, -1), // POS 17
-				new Word(Opcode.DATA, -1, -1, -1) };// POS 18
+				new Word(Opcode.STOP, -1, -1, -1),
+				new Word(Opcode.DATA, -1, -1, -1) };
 
-		public Word[] fibonacciTRAP = new Word[] { // mesmo que prog exemplo, so que usa r0 no lugar de r8
-				new Word(Opcode.LDI, 8, -1, 1), // leitura
-				new Word(Opcode.LDI, 9, -1, 100), // endereco a guardar
+		public Word[] fibonacciTRAP = new Word[] {
+				new Word(Opcode.LDI, 8, -1, 1),
+				new Word(Opcode.LDI, 9, -1, 100),
 				new Word(Opcode.TRAP, -1, -1, -1),
-				new Word(Opcode.LDD, 7, -1, 100), // numero do tamanho do fib
+				new Word(Opcode.LDD, 7, -1, 100),
 				new Word(Opcode.LDI, 3, -1, 0),
 				new Word(Opcode.ADD, 3, 7, -1),
-				new Word(Opcode.LDI, 4, -1, 36), // posicao para qual ira pular (stop) *
-				new Word(Opcode.LDI, 1, -1, -1), // caso negativo
+				new Word(Opcode.LDI, 4, -1, 36),
+				new Word(Opcode.LDI, 1, -1, -1),
 				new Word(Opcode.STD, 1, -1, 41),
-				new Word(Opcode.JMPIL, 4, 7, -1), // pula pra stop caso negativo *
-				new Word(Opcode.JMPIE, 4, 7, -1), // pula pra stop caso 0
-				new Word(Opcode.ADDI, 7, -1, 41), // fibonacci + posiçao do stop
+				new Word(Opcode.JMPIL, 4, 7, -1),
+				new Word(Opcode.JMPIE, 4, 7, -1),
+				new Word(Opcode.ADDI, 7, -1, 41),
 				new Word(Opcode.LDI, 1, -1, 0),
-				new Word(Opcode.STD, 1, -1, 41), // 25 posicao de memoria onde inicia a serie de fibonacci gerada
-				new Word(Opcode.SUBI, 3, -1, 1), // se 1 pula pro stop
+				new Word(Opcode.STD, 1, -1, 41),
+				new Word(Opcode.SUBI, 3, -1, 1),
 				new Word(Opcode.JMPIE, 4, 3, -1),
 				new Word(Opcode.ADDI, 3, -1, 1),
 				new Word(Opcode.LDI, 2, -1, 1),
 				new Word(Opcode.STD, 2, -1, 42),
-				new Word(Opcode.SUBI, 3, -1, 2), // se 2 pula pro stop
+				new Word(Opcode.SUBI, 3, -1, 2),
 				new Word(Opcode.JMPIE, 4, 3, -1),
 				new Word(Opcode.LDI, 0, -1, 43),
-				new Word(Opcode.LDI, 6, -1, 25), // salva posiçao de retorno do loop
-				new Word(Opcode.LDI, 5, -1, 0), // salva tamanho
+				new Word(Opcode.LDI, 6, -1, 25),
+				new Word(Opcode.LDI, 5, -1, 0),
 				new Word(Opcode.ADD, 5, 7, -1),
-				new Word(Opcode.LDI, 7, -1, 0), // zera (inicio do loop)
-				new Word(Opcode.ADD, 7, 5, -1), // recarrega tamanho
+				new Word(Opcode.LDI, 7, -1, 0),
+				new Word(Opcode.ADD, 7, 5, -1),
 				new Word(Opcode.LDI, 3, -1, 0),
 				new Word(Opcode.ADD, 3, 1, -1),
 				new Word(Opcode.LDI, 1, -1, 0),
@@ -1225,13 +958,8 @@ public class Sistema {
 				new Word(Opcode.STX, 0, 2, -1),
 				new Word(Opcode.ADDI, 0, -1, 1),
 				new Word(Opcode.SUB, 7, 0, -1),
-				new Word(Opcode.JMPIG, 6, 7, -1), // volta para o inicio do loop
-				new Word(Opcode.STOP, -1, -1, -1), // POS 36
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1), // POS 41
+				new Word(Opcode.JMPIG, 6, 7, -1),
+				new Word(Opcode.STOP, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
@@ -1245,42 +973,34 @@ public class Sistema {
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
-				new Word(Opcode.DATA, -1, -1, -1)
-		};
+				new Word(Opcode.DATA, -1, -1, -1),
+				new Word(Opcode.DATA, -1, -1, -1),
+				new Word(Opcode.DATA, -1, -1, -1) };
 
 		public Word[] PB = new Word[] {
-				// dado um inteiro em alguma posiçao de memória,
-				// se for negativo armazena -1 na saída; se for positivo responde o fatorial do
-				// número na saída
-				new Word(Opcode.LDI, 0, -1, 7), // numero para colocar na memoria
+				new Word(Opcode.LDI, 0, -1, 7),
 				new Word(Opcode.STD, 0, -1, 50),
 				new Word(Opcode.LDD, 0, -1, 50),
 				new Word(Opcode.LDI, 1, -1, -1),
-				new Word(Opcode.LDI, 2, -1, 13), // SALVAR POS STOP
-				new Word(Opcode.JMPIL, 2, 0, -1), // caso negativo pula pro STD
+				new Word(Opcode.LDI, 2, -1, 13),
+				new Word(Opcode.JMPIL, 2, 0, -1),
 				new Word(Opcode.LDI, 1, -1, 1),
 				new Word(Opcode.LDI, 6, -1, 1),
 				new Word(Opcode.LDI, 7, -1, 13),
-				new Word(Opcode.JMPIE, 7, 0, 0), // POS 9 pula pra STD (Stop-1)
+				new Word(Opcode.JMPIE, 7, 0, 0),
 				new Word(Opcode.MULT, 1, 0, -1),
 				new Word(Opcode.SUB, 0, 6, -1),
-				new Word(Opcode.JMP, -1, -1, 9), // pula para o JMPIE
+				new Word(Opcode.JMP, -1, -1, 9),
 				new Word(Opcode.STD, 1, -1, 15),
-				new Word(Opcode.STOP, -1, -1, -1), // POS 14
-				new Word(Opcode.DATA, -1, -1, -1) }; // POS 15
+				new Word(Opcode.STOP, -1, -1, -1),
+				new Word(Opcode.DATA, -1, -1, -1) };
 
 		public Word[] PC = new Word[] {
-				// Para um N definido (10 por exemplo)
-				// o programa ordena um vetor de N números em alguma posiçao de memória;
-				// ordena usando bubble sort
-				// loop ate que nao swap nada
-				// passando pelos N valores
-				// faz swap de vizinhos se da esquerda maior que da direita
-				new Word(Opcode.LDI, 7, -1, 5), // TAMANHO DO BUBBLE SORT (N)
-				new Word(Opcode.LDI, 6, -1, 5), // aux N
-				new Word(Opcode.LDI, 5, -1, 46), // LOCAL DA MEMORIA
-				new Word(Opcode.LDI, 4, -1, 47), // aux local memoria
-				new Word(Opcode.LDI, 0, -1, 4), // colocando valores na memoria
+				new Word(Opcode.LDI, 7, -1, 5),
+				new Word(Opcode.LDI, 6, -1, 5),
+				new Word(Opcode.LDI, 5, -1, 46),
+				new Word(Opcode.LDI, 4, -1, 47),
+				new Word(Opcode.LDI, 0, -1, 4),
 				new Word(Opcode.STD, 0, -1, 46),
 				new Word(Opcode.LDI, 0, -1, 3),
 				new Word(Opcode.STD, 0, -1, 47),
@@ -1289,40 +1009,39 @@ public class Sistema {
 				new Word(Opcode.LDI, 0, -1, 1),
 				new Word(Opcode.STD, 0, -1, 49),
 				new Word(Opcode.LDI, 0, -1, 2),
-				new Word(Opcode.STD, 0, -1, 50), // colocando valores na memoria até aqui - POS 13
-				new Word(Opcode.LDI, 3, -1, 25), // Posicao para pulo CHAVE 1
+				new Word(Opcode.STD, 0, -1, 50),
+				new Word(Opcode.LDI, 3, -1, 25),
 				new Word(Opcode.STD, 3, -1, 99),
-				new Word(Opcode.LDI, 3, -1, 22), // Posicao para pulo CHAVE 2
+				new Word(Opcode.LDI, 3, -1, 22),
 				new Word(Opcode.STD, 3, -1, 98),
-				new Word(Opcode.LDI, 3, -1, 38), // Posicao para pulo CHAVE 3
+				new Word(Opcode.LDI, 3, -1, 38),
 				new Word(Opcode.STD, 3, -1, 97),
-				new Word(Opcode.LDI, 3, -1, 25), // Posicao para pulo CHAVE 4 (nao usada)
+				new Word(Opcode.LDI, 3, -1, 25),
 				new Word(Opcode.STD, 3, -1, 96),
-				new Word(Opcode.LDI, 6, -1, 0), // r6 = r7 - 1 POS 22
+				new Word(Opcode.LDI, 6, -1, 0),
 				new Word(Opcode.ADD, 6, 7, -1),
-				new Word(Opcode.SUBI, 6, -1, 1), // ate aqui
-				new Word(Opcode.JMPIEM, -1, 6, 97), // CHAVE 3 para pular quando r7 for 1 e r6 0 para interomper o loop
-													// de vez do programa
-				new Word(Opcode.LDX, 0, 5, -1), // r0 e r1 pegando valores das posições da memoria POS 26
+				new Word(Opcode.SUBI, 6, -1, 1),
+				new Word(Opcode.JMPIEM, -1, 6, 97),
+				new Word(Opcode.LDX, 0, 5, -1),
 				new Word(Opcode.LDX, 1, 4, -1),
 				new Word(Opcode.LDI, 2, -1, 0),
 				new Word(Opcode.ADD, 2, 0, -1),
 				new Word(Opcode.SUB, 2, 1, -1),
 				new Word(Opcode.ADDI, 4, -1, 1),
 				new Word(Opcode.SUBI, 6, -1, 1),
-				new Word(Opcode.JMPILM, -1, 2, 99), // LOOP chave 1 caso neg procura prox
+				new Word(Opcode.JMPILM, -1, 2, 99),
 				new Word(Opcode.STX, 5, 1, -1),
 				new Word(Opcode.SUBI, 4, -1, 1),
 				new Word(Opcode.STX, 4, 0, -1),
 				new Word(Opcode.ADDI, 4, -1, 1),
-				new Word(Opcode.JMPIGM, -1, 6, 99), // LOOP chave 1 POS 38
+				new Word(Opcode.JMPIGM, -1, 6, 99),
 				new Word(Opcode.ADDI, 5, -1, 1),
 				new Word(Opcode.SUBI, 7, -1, 1),
-				new Word(Opcode.LDI, 4, -1, 0), // r4 = r5 + 1 POS 41
+				new Word(Opcode.LDI, 4, -1, 0),
 				new Word(Opcode.ADD, 4, 5, -1),
-				new Word(Opcode.ADDI, 4, -1, 1), // ate aqui
-				new Word(Opcode.JMPIGM, -1, 7, 98), // LOOP chave 2
-				new Word(Opcode.STOP, -1, -1, -1), // POS 45
+				new Word(Opcode.ADDI, 4, -1, 1),
+				new Word(Opcode.JMPIGM, -1, 7, 98),
+				new Word(Opcode.STOP, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
 				new Word(Opcode.DATA, -1, -1, -1),
