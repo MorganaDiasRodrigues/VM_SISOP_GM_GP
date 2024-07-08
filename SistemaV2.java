@@ -37,8 +37,8 @@ public class SistemaV2 {
     public class Scheduler implements Runnable {
         private int ciclesLimit;
         private int processCurrentCicles = 0;
-        private Queue<PCB> readyQueue;// Fila de processos prontos
-        private Queue<PCB> blockedQueue;// Fila de processos bloqueados
+        private final Queue<PCB> readyQueue;// Fila de processos prontos
+        private final Queue<PCB> blockedQueue;// Fila de processos bloqueados
         private Semaphore semCPU, semScheduler;
         private GP gp;
         private GM gm;
@@ -99,23 +99,35 @@ public class SistemaV2 {
         }
 
         public void addBlockProcess(PCB _pcb) {
-            for (PCB pcb : blockedQueue) {
-                if (pcb.getId() == _pcb.getId()) {
-                    System.out.println("Processo " + _pcb.getId() + " já na fila de bloqueados.");
-                    return;
+            synchronized (blockedQueue) {
+                for (PCB pcb : blockedQueue) {
+                    if (pcb.getId() == _pcb.getId()) {
+                        System.out.println("Processo " + _pcb.getId() + " já na fila de bloqueados.");
+                        return;
+
+                    }
+                    else {
+                        blockedQueue.add(_pcb);
+                        System.out.println("Processo " + _pcb.getId() + " adicionado à fila de bloqueados.");
+                    }
                 }
             }
-            blockedQueue.add(_pcb);
         }
 
         public void unblockProcess(PCB _pcb) {
-            if (blockedQueue.remove(_pcb)) {
-                readyQueue.add(_pcb);
-                System.out.println("Processo " + _pcb.getId() + " desbloqueado. Fila de prontos: " + getReadyQueue());
-            } else {
-                System.out.println("Processo " + _pcb.getId() + " não estava na fila de bloqueados.");
+            synchronized (blockedQueue) {
+                if (blockedQueue.remove(_pcb)) {
+                    synchronized (readyQueue) {
+                        readyQueue.add(_pcb);
+                        System.out.println("Processo " + _pcb.getId() + " desbloqueado.");
+                    }
+                } else {
+                    System.out.println("Processo " + _pcb.getId() + " não estava na fila de bloqueados.");
+                }
             }
         }
+
+
 
         @Override
         public void run() {
@@ -263,7 +275,7 @@ public class SistemaV2 {
         public boolean run(Scheduler scheduler, PCB pcb) {
             while (true) {
                 if (legal(pcb.getPC())) {
-                    ir = m[pcb.getPC()+pcb.getFramesAlocados().size()-1];
+                    ir = m[pcb.getPC() + pcb.getFramesAlocados().size() - 1];
                     if (debug) {
                         System.out.println("                               pc: " + pc + "       exec: ");
                         mem.dump(ir);
@@ -413,11 +425,9 @@ public class SistemaV2 {
                         case TRAP:
                             sysCall.handle(pcb);
                             irpt = Interrupts.intBlocked;
-                            System.out.println("Processo " + pcb.getId() + " interrompido por chamada de sistema (TRAP).");
                             break;
                         default:
                             irpt = Interrupts.intInstrucaoInvalida;
-                            System.out.println("Processo " + pcb.getId() + " interrompido por instrução inválida.");
                             break;
                     }
                 }
@@ -427,44 +437,16 @@ public class SistemaV2 {
                 if (scheduler.getProcessCurrentCicles() % scheduler.ciclesLimit == 0) {
                     irpt = Interrupts.intCycle;
                     pcb.state = ih.handle(irpt, pc, pcb);
-                    System.out.println("Processo " + pcb.getId() + " interrompido por atingir o limite de ciclos.");
                     return false;
-                    //scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
-                    //System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
-                    //pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
-                    //if (pcb == null) {
-                    //    break; // Se não houver mais processos prontos, interrompa a execução
-                    //}
-                    //System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
-                    //System.out.println("PC do processo atual: " + pcb.getPC());
-                    //ir = m[pc];
-                    //setContext(0, mem.tamMem - 1, pcb.getPC());
-
-                    ///scheduler.resetCicles();
-                    //continue; // Continua a execução com o próximo processo
                 }
                 if (irpt != Interrupts.noInterrupt) {
                     pcb.state = ih.handle(irpt, pc, pcb);
                     break;
-//                    if (irpt == Interrupts.intSTOP) {
-//                        System.out.println("Processo " + pcb.getId() + " interrompido por STOP.");
-//                        return true;
-//                    } else if (irpt == Interrupts.intBlocked) {
-//                        scheduler.addBlockProcess(pcb);
-//                        System.out.println("Processo " + pcb.getId() + " bloqueado.");
-//                        System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
-//                        System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
-//                        irpt = Interrupts.noInterrupt;
-//                        return false;
-//                    } else if (irpt == Interrupts.intIO) {
-//                        System.out.println("Processo " + pcb.getId() + " aguardando operação de I/O.");
-//                        irpt = Interrupts.noInterrupt; // Reseta a interrupção de I/O
-//                    }
-//                    break;
                 }
             }
             return true;
         }
+
 
 
         @Override
@@ -489,6 +471,7 @@ public class SistemaV2 {
                 }
             }
         }
+
     }
 
     public class TabelaPaginas {
@@ -794,53 +777,32 @@ public class SistemaV2 {
     }
 
     public class InterruptHandling {
-
         private GP gp;
 
         public void setGP(GP gp) {
             this.gp = gp;
         }
 
-
-
-
-        public void handleWithoutScheduler(Interrupts irpt, int pc) { // apenas avisa - todas interrupcoes neste momento
-            // finalizam o
-            // programa
-            System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
-        }
-
-        public String handle(Interrupts irpt, int pc, PCB pcb) { // apenas avisa - todas interrupcoes neste momento
-            // finalizam o
-            // programa
-            System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
+        public String handle(Interrupts irpt, int pc, PCB pcb) {
+            System.out.println("Interrupcao " + irpt + " pc: " + pc);
             switch (irpt) {
                 case intSTOP -> {
-                    System.out.println("Processo sofrendo escalonamento");
                     gp.desalocaProcesso(pcb.getId());
-
-                    //gm.desaloca(pcb.getFramesAlocados());
                     return "ready";
                 }
                 case intInstrucaoInvalida -> {
                     gp.desalocaProcesso(pcb.getId());
-                    System.out.println("Instrução inválida, matando o processo.");
+                    System.out.println("Instrução inválida.");
                     System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
                     System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
                     return "ready";
                 }
                 case intOverflow -> {
                     System.out.println("Overflow.");
-                    scheduler.addBlockProcess(pcb);
-                    System.out.println("Processo bloqueado por overflow.");
-                    System.out.println("Processo " + pcb.getId() + " bloqueado.");
-                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
-                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
                     return "ready";
                 }
                 case intBlocked -> {
                     scheduler.addBlockProcess(pcb);
-
                     System.out.println("Processo bloqueado.");
                     System.out.println("Processo " + pcb.getId() + " bloqueado.");
                     System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
@@ -848,23 +810,16 @@ public class SistemaV2 {
                     return "blocked";
                 }
                 case intCycle -> {
-                    System.out.println("Processo bloqueado por limite de ciclos.");
                     gp.filaProntos.add(pcb);
                     scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
-                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
                     pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
                     System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
-                    System.out.println("PC do processo atual: " + pcb.getPC());
-
                     return "ready";
                 }
                 case intIO -> {
-                    scheduler.addBlockProcess(pcb);
-                    System.out.println("Precosso bloqueado por IO");
-                    System.out.println("Processo " + pcb.getId() + " bloqueado.");
-                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
-                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
-                    return "blocked";
+                    scheduler.unblockProcess(pcb);
+                    System.out.println("Processo " + pcb.getId() + " desbloqueado.");
+                    return "ready";
                 }
                 default -> {
                     return "ready";
@@ -872,6 +827,7 @@ public class SistemaV2 {
             }
         }
     }
+
 
     public class SysCallHandling {
         private VM vm;
@@ -881,10 +837,11 @@ public class SistemaV2 {
         }
 
         public void handle(PCB pcb) {
-            System.out.println("                                               Chamada de SistemaV2 com op  /  par:  "
-                    + vm.cpu.reg[8] + " / " + vm.cpu.reg[9]);
+            System.out.println("Chamada de SistemaV2 com op / par: " + vm.cpu.reg[8] + " / " + vm.cpu.reg[9]);
             vm.cpu.irpt = Interrupts.intBlocked;
             vm.scheduler.addBlockProcess(pcb);
+            System.out.println("Processo " + pcb.getId() + " interrompido por chamada de sistema (TRAP).");
+
             // Simular uma operação de IO
             new Thread(() -> {
                 try {
@@ -893,7 +850,6 @@ public class SistemaV2 {
                     e.printStackTrace();
                 }
                 vm.scheduler.unblockProcess(pcb);
-                vm.cpu.irpt = Interrupts.intIO;
                 try {
                     vm.semCPU.release(); // Acorda a CPU para continuar a execução
                 } catch (Exception e) {
@@ -902,6 +858,8 @@ public class SistemaV2 {
             }).start();
         }
     }
+
+
 
     public VM vm;
     public InterruptHandling ih;
@@ -1093,41 +1051,31 @@ public class SistemaV2 {
 
     public class IODevice implements Runnable {
         private SistemaV2 sistema;
-        private BlockingQueue<Integer> ioQueue;
 
         public IODevice(SistemaV2 sistema) {
             this.sistema = sistema;
-            this.ioQueue = new LinkedBlockingQueue<>();
         }
-
         public void writeRequest(int request) {
-            try {
-                ioQueue.put(request);
-                System.out.println("Escrevendo request no ioQueue: " + request);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                System.out.println("Erro ao escrever request no ioQueue: " + request);
-            }
+            sistema.ioQueue.add(request);
+            System.out.println("Escrevendo request no ioQueue" + request);
         }
 
         @Override
         public void run() {
             while (true) {
                 try {
-                    Integer ioRequest = ioQueue.take();
-                    System.out.println("Processando request de I/O: " + ioRequest);
-                    Thread.sleep(1000); // Simula o tempo de operação de I/O
+                    Scanner scanner = new Scanner(System.in);
+                    Integer ioRequest = sistema.ioQueue.take();
+                    Thread.sleep(1000); // Simular tempo de IO
                     sistema.vm.cpu.irpt = Interrupts.intIO;
                     sistema.vm.semCPU.release(); // Acorda a CPU para continuar a execução
-                    System.out.println("Operação de I/O completa. CPU acordada.");
+                    System.out.println("Operação de IO completa. CPU acordada.");
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    System.out.println("Thread de I/O interrompida.");
+                    e.printStackTrace();
                 }
             }
         }
     }
-
 
     public class Programas {
         public Word[] fatorial = new Word[]{
