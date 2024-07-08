@@ -245,10 +245,10 @@ public class SistemaV2 {
         }
 
         public void setContext(int _base, int _limite, int _pc) {
-            base = _base;
-            limite = _limite;
-            pc = _pc;
-            irpt = Interrupts.noInterrupt;
+            this.base = _base;
+            this.limite = _limite;
+            this.pc = _pc;
+            this.irpt = Interrupts.noInterrupt;
         }
 
         public boolean run(Scheduler scheduler, PCB pcb) {
@@ -421,6 +421,9 @@ public class SistemaV2 {
                     scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
                     System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
                     pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
+                    if (pcb == null) {
+                        break; // Se não houver mais processos prontos, interrompa a execução
+                    }
                     System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
                     System.out.println("PC do processo atual: " + pcb.getPC());
                     setContext(0, mem.tamMem - 1, pcb.getPC());
@@ -449,6 +452,7 @@ public class SistemaV2 {
             }
             return true;
         }
+
 
         @Override
         public void run() {
@@ -650,7 +654,7 @@ public class SistemaV2 {
             PCB pcb = new PCB(processID++, FramesAlocados, tamanhoPrograma);
             pcb.setPC(0);
             filaProntos.add(pcb);
-
+            scheduler.addReadyProcess(pcb);
             System.out.println("Processo criado com sucesso. ID do Processo: " + pcb.getId());
             return true;
         }
@@ -912,9 +916,9 @@ public class SistemaV2 {
                 }
 
                 if (command.equals("execAll")) {
-                    for (PCB pcb : sistema.gp.filaProntos) {
-                        sistema.scheduler.addReadyProcess(pcb);
-                    }
+//                    for (PCB pcb : sistema.gp.filaProntos) {
+//                        sistema.scheduler.addReadyProcess(pcb);
+//                    }
                     System.out.println("Processos prontos: " + scheduler.getReadyQueue());
                     while (!sistema.scheduler.readyQueue.isEmpty()) {
                         PCB pcb = sistema.scheduler.readyQueue.poll();
