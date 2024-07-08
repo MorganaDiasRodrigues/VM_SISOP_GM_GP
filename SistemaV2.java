@@ -180,10 +180,10 @@ public class SistemaV2 {
         public int p; // parametro para instrucao (k ou A cfe operacao), ou o dado, se opcode = DADO
 
         public Word(Opcode _opc, int _r1, int _r2, int _p) { // vide definiçao da VM - colunas vermelhas da tabela
-            opc = _opc;
-            r1 = _r1;
-            r2 = _r2;
-            p = _p;
+            this.opc = _opc;
+            this.r1 = _r1;
+            this.r2 = _r2;
+            this.p = _p;
         }
     }
 
@@ -253,8 +253,8 @@ public class SistemaV2 {
 
         public boolean run(Scheduler scheduler, PCB pcb) {
             while (true) {
-                if (legal(pc)) {
-                    ir = m[pc];
+                if (legal(pcb.getPC())) {
+                    ir = m[pcb.getPC()+pcb.getFramesAlocados().size()-1];
                     if (debug) {
                         System.out.println("                               pc: " + pc + "       exec: ");
                         mem.dump(ir);
@@ -426,6 +426,7 @@ public class SistemaV2 {
                     }
                     System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
                     System.out.println("PC do processo atual: " + pcb.getPC());
+                    ir = m[pc];
                     setContext(0, mem.tamMem - 1, pcb.getPC());
                     pcb.setRunning(true);
                     scheduler.resetCicles();
@@ -593,13 +594,21 @@ public class SistemaV2 {
         private List<Integer> framesAlocados;
         private int pc;
         private boolean isRunning;
+        private int[] registradores; // Adicionado para armazenar os registradores
+        private CPU cpu;
 
         public PCB(int id, List<Integer> framesAlocados, int tamPrograma) {
             this.id = id;
             this.framesAlocados = framesAlocados;
             this.tamPrograma = tamPrograma;
+            this.registradores = new int[10]; // Inicializa o array de registradores
         }
 
+        public void saveCPUContext(CPU cpu) {
+            this.cpu = cpu;
+            this.pc = cpu.pc;
+
+        }
         public void setRunning(boolean isRunning) {
             this.isRunning = isRunning;
         }
@@ -616,6 +625,14 @@ public class SistemaV2 {
             return pc;
         }
 
+        public int[] getRegistradores() {
+            return registradores;
+        }
+
+        public void setRegistradores(int[] registradores) {
+            this.registradores = registradores;
+        }
+
         public List<Integer> getFramesAlocados() {
             return this.framesAlocados;
         }
@@ -628,6 +645,7 @@ public class SistemaV2 {
             return this.tamPrograma;
         }
     }
+
 
     public class GP {
         private final GM gm;
