@@ -191,6 +191,7 @@ public class Sistema {
 
 		public boolean run(Scheduler scheduler, PCB pcb) { // execucao da CPU supoe que o contexto da CPU, vide acima,
 															// esta
+
 			// devidamente
 			// setado
 			while (true) { // ciclo de instrucoes. acaba cfe instrucao, veja cada caso.
@@ -390,15 +391,16 @@ public class Sistema {
 							irpt = Interrupts.intInstrucaoInvalida;
 							break;
 					}
-					pcb.setPC(pc);
 				}
+				pcb.setPC(pc);
 				scheduler.addCicle();
-				// System.out.println("pc");
-				// System.out.println(pc);
-				// System.out.println("PCB PC");
-				// System.out.println(pcb.getPC());
-				if (scheduler.isLimit() == true) {
+				// if (scheduler.isLimit() == true) {
+				if (scheduler.getProcessCurrentCicles() % scheduler.ciclesLimit == 0) {
 					irpt = Interrupts.intBlocked;
+					System.out.println("Last PCB PC");
+					System.out.println(pcb.pc);
+					System.out.println("Last PC");
+					System.out.println(pc);
 					return false;
 				}
 				// --------------------------------------------------------------------------------------------------
@@ -408,6 +410,10 @@ public class Sistema {
 					break; // break sai do loop da cpu
 				}
 			} // FIM DO CICLO DE UMA INSTRUÇÃO
+			System.out.println("Last PCB PC");
+			System.out.println(pcb.pc);
+			System.out.println("Last PC");
+			System.out.println(pc);
 			return true;
 		}
 
@@ -687,12 +693,14 @@ public class Sistema {
 		private int numeroFrames;
 		private TabelaPaginas tabelaPaginas;;
 		public int[] framesAlocados;
+		public ArrayList context;
 
 		public GM(Word[] m, int tamPg) {
 			this.m = m;
 			this.tamPg = tamPg;
 			this.numeroFrames = m.length / tamPg;
 			this.tabelaPaginas = new TabelaPaginas(numeroFrames);
+			this.context = new ArrayList();
 		}
 
 		public List<Integer> getFramesDisponiveis() {
@@ -728,7 +736,27 @@ public class Sistema {
 			}
 		}
 
-		public boolean alocaPrograma(Word[] programa) {
+		public int alocaPrograma(Word[] programa) {
+			int numeroPalavras = programa.length;
+			int numeroFramesNecessarios = (int) Math.ceil((double) numeroPalavras / tamPg);
+			List<Integer> framesDisponiveis = getFramesDisponiveis();
+			int indexInicioProg = framesDisponiveis.get(0) * tamPg;
+			framesAlocados = new int[numeroFramesNecessarios];
+			int indicePrograma = 0;
+			for (int index = 0; index < numeroFramesNecessarios; index++) {
+				int frameIndexDisponivel = framesDisponiveis.get(index);
+				tabelaPaginas.alocaFrame(frameIndexDisponivel);
+				framesAlocados[index] = frameIndexDisponivel;
+				int indexInicio = frameIndexDisponivel * tamPg;
+				int numIntrucoes = Math.min(tamPg, numeroPalavras - indicePrograma);
+				carregarInstrucoesNaMemoria(indexInicio, indicePrograma, programa);
+				indicePrograma += numIntrucoes;
+			}
+			System.out.println("Programa alocado com sucesso. Total de frames alocados: " + numeroFramesNecessarios);
+			return indexInicioProg;
+		}
+
+		public boolean podeAlocaPrograma(Word[] programa) {
 			int numeroPalavras = programa.length;
 			int numeroFramesNecessarios = (int) Math.ceil((double) numeroPalavras / tamPg);
 			List<Integer> framesDisponiveis = getFramesDisponiveis();
@@ -738,19 +766,6 @@ public class Sistema {
 				return false;
 			}
 
-			framesAlocados = new int[numeroFramesNecessarios];
-			int indicePrograma = 0;
-			for (int index = 0; index < numeroFramesNecessarios; index++) {
-				int frameIndexDisponivel = framesDisponiveis.get(index);
-				tabelaPaginas.alocaFrame(frameIndexDisponivel);
-				framesAlocados[index] = frameIndexDisponivel;
-
-				int indexInicio = frameIndexDisponivel * tamPg;
-				int numIntrucoes = Math.min(tamPg, numeroPalavras - indicePrograma);
-				carregarInstrucoesNaMemoria(indexInicio, indicePrograma, programa);
-				indicePrograma += numIntrucoes;
-			}
-			System.out.println("Programa alocado com sucesso. Total de frames alocados: " + numeroFramesNecessarios);
 			return true;
 		}
 
@@ -773,11 +788,21 @@ public class Sistema {
 		private int tamPrograma;
 		private List<Integer> framesAlocados;
 		private int pc;
+		public CPU cpu;
 
 		public PCB(int id, List<Integer> framesAlocados, int tamPrograma) {
 			this.id = id;
 			this.framesAlocados = framesAlocados;
 			this.tamPrograma = tamPrograma;
+			this.cpu = null;
+		}
+
+		public void setCPU(CPU cpu) {
+			this.cpu = cpu;
+		}
+
+		public CPU getCPU() {
+			return this.cpu;
 		}
 
 		public void setPC(int pc) {
@@ -815,15 +840,21 @@ public class Sistema {
 
 		public boolean criaProcesso(Word[] programa) {
 			int tamanhoPrograma = programa.length;
-
-			if (!gm.alocaPrograma(programa)) {
+			int index_na_moria = 0;
+			if (!gm.podeAlocaPrograma(programa)) {
 				System.out.println("Não há memória suficiente para alocar o programa.");
 				return false;
 			}
 
+			else {
+				index_na_moria = gm.alocaPrograma(programa);
+			}
+
 			List<Integer> FramesAlocados = gm.getFramesAlocados();
 			PCB pcb = new PCB(processID++, FramesAlocados, tamanhoPrograma);
-			pcb.setPC(0);
+			System.out.println("INDEX NA MEMORIA");
+			System.out.println(index_na_moria);
+			pcb.setPC(index_na_moria);
 			filaProntos.add(pcb);
 
 			System.out.println("Processo criado com sucesso. ID do Processo: " + pcb.getId());
@@ -1069,6 +1100,8 @@ public class Sistema {
 				}
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
+						System.out.println("pcb.pc");
+						System.out.println(pcb.pc);
 						s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
 						s.vm.cpu.run_without_scheduler();
 						break;
@@ -1077,16 +1110,19 @@ public class Sistema {
 			}
 
 			if (command.equals("execAll")) {
+
 				while (true) {
 					PCB pcb = s.gp.filaProntos.poll();
-					System.out.println("Executando o programa " + pcb.getId());
+					if (pcb.getCPU() != null) {
+						s.vm.cpu = pcb.getCPU();
+					}
 					s.vm.cpu.setContext(0, s.vm.tamMem - 1, pcb.getPC());
 					if (s.vm.cpu.run(s.scheduler, pcb) == false) {
 						s.gp.filaProntos.add(pcb);
 					} else {
 						s.gp.desalocaProcesso(pcb.getId());
 					}
-					s.scheduler.resetCicles();
+					pcb.setCPU(s.vm.cpu);
 					if (s.gp.filaProntos.isEmpty() == true) {
 						break;
 					}
