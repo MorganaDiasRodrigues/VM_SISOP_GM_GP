@@ -29,9 +29,11 @@ public class Sistema {
 		// Implement RoundRobin
 		public int ciclesLimit;
 		public int processCurrentCicles = 0;
+		public GP gp;
 
-		public Scheduler(int ciclesLimit) {
+		public Scheduler(int ciclesLimit, GP gp) {
 			this.ciclesLimit = ciclesLimit;
+			this.gp = gp;
 		}
 
 		public Queue<Process> addProcess(Queue<Process> processList, Process p) {
@@ -373,6 +375,7 @@ public class Sistema {
 						// outras
 						case STOP: // por enquanto, para execucao
 							irpt = Interrupts.intSTOP;
+							// deslocar o processo que executou STOP (tirar da memória)
 							break;
 
 						case DATA:
@@ -397,23 +400,31 @@ public class Sistema {
 				// if (scheduler.isLimit() == true) {
 				if (scheduler.getProcessCurrentCicles() % scheduler.ciclesLimit == 0) {
 					irpt = Interrupts.intBlocked;
-					System.out.println("Last PCB PC");
-					System.out.println(pcb.pc);
-					System.out.println("Last PC");
-					System.out.println(pc);
+					System.out.println("Processo interrompido por limite de ciclos. Adicionando novamente na fila de prontos.");
+					// adicionar processo na fila de prontos
+					scheduler.gp.addToReadyQueue(pcb);
+					// System.out.println("Last PCB PC");
+					// System.out.println(pcb.pc);
+					// System.out.println("Last PC");
+					// System.out.println(pc);
 					return false;
 				}
 				// --------------------------------------------------------------------------------------------------
 				// VERIFICA INTERRUPÇÃO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
 				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupção
-					ih.handle(irpt, pc); // desvia para rotina de tratamento
+					// ih.handle(irpt, pc); // desvia para rotina de tratamento
+					ih.setAttributes(gm, gp, scheduler);
+					boolean return_ih = ih.handleInterruption(pcb, reg, ir, m, pc, irpt);
+					if (return_ih == false) {
+						break;
+					}
 					break; // break sai do loop da cpu
 				}
 			} // FIM DO CICLO DE UMA INSTRUÇÃO
-			System.out.println("Last PCB PC");
-			System.out.println(pcb.pc);
-			System.out.println("Last PC");
-			System.out.println(pc);
+			// System.out.println("Last PCB PC");
+			// System.out.println(pcb.pc);
+			// System.out.println("Last PC");
+			// System.out.println(pc);
 			return true;
 		}
 
@@ -621,7 +632,8 @@ public class Sistema {
 				// --------------------------------------------------------------------------------------------------
 				// VERIFICA INTERRUPÇÃO !!! - TERCEIRA FASE DO CICLO DE INSTRUÇÕES
 				if (!(irpt == Interrupts.noInterrupt)) { // existe interrupção
-					ih.handle(irpt, pc); // desvia para rotina de tratamento
+					// ih.handleInterruption(reg, ir, m, pc, irpt)(irpt, pc); // desvia para rotina de tratamento
+					// ih.handleInterruption(reg, ir, m, pc, irpt);
 					break; // break sai do loop da cpu
 				}
 			} // FIM DO CICLO DE UMA INSTRUÇÃO
@@ -775,6 +787,14 @@ public class Sistema {
 					tabelaPaginas.liberaFrame(frameIndex);
 				}
 				System.out.println("Frames desalocados com sucesso.");
+				System.out.println("Frames desalocados: " + framesAlocados.size());
+				// desaloca da memória, substituindo por opcodes de memoria vazia
+				// usando os indices dos frames alocados
+				for (int frameIndex : framesAlocados) {
+					for (int i = frameIndex * tamPg; i < (frameIndex + 1) * tamPg; i++) {
+						m[i] = new Word(Opcode.___, -1, -1, -1);
+					}
+				}
 			} else {
 				System.out.println("No frames were allocated or provided for deallocation.");
 			}
@@ -899,6 +919,10 @@ public class Sistema {
 			return -1;
 		}
 
+		public void addToReadyQueue(PCB pcb) {
+			filaProntos.add(pcb);
+		}
+
 	}
 
 	// --------------------H A R D W A R E - fim
@@ -916,9 +940,47 @@ public class Sistema {
 	// ------------------- I N T E R R U P C O E S - rotinas de tratamento
 	// ----------------------------------
 	public class InterruptHandling {
-		public void handle(Interrupts irpt, int pc) { // apenas avisa - todas interrupcoes neste momento finalizam o
-														// programa
-			System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
+		private GM gm;
+		private GP gp;
+		private Scheduler scheduler;
+
+		// public void handle(Interrupts irpt, int pc) { // apenas avisa - todas interrupcoes neste momento finalizam o
+		// 												// programa
+		// 	System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
+		// }
+
+		public void setAttributes(GM gm, GP gp, Scheduler scheduler) {
+			this.gm = gm;
+			this.gp = gp;
+			this.scheduler = scheduler;
+		}
+
+		public boolean handleInterruption(PCB pcb, int [] registers, Word instructions, Word[] memory, int PC, Interrupts interrupts) {
+			switch (interrupts) {
+				case intSTOP -> {
+									System.out.println("INICIANDO ROTINA STOP");
+                                    System.out.println("Programa finalizado. Desalocando da memória.");
+									System.out.println("ID do process a ser desalocado: " + pcb.getId());
+									gp.desalocaProcesso(pcb.getId());
+									System.out.println("Processo desalocado com sucesso.");
+                                    return false;
+                        }
+				case intInstrucaoInvalida -> {
+                                    System.out.println("Instrução inválida.");
+                                    return false;
+                        }
+				case intOverflow -> {
+                                    System.out.println("Overflow.");
+                                    return false;
+                        }
+				case intBlocked -> {
+                                    System.out.println("Processo bloqueado por limite de ciclos.");
+                                    return false;
+                        }
+				default -> {
+                                    return true;
+                        }
+			}
 		}
 	}
 
@@ -963,7 +1025,7 @@ public class Sistema {
 		progs = new Programas();
 		gm = new GM(vm.m, tamanhoPg);
 		gp = new GP(gm);
-		scheduler = new Scheduler(4);
+		scheduler = new Scheduler(4, gp);
 	}
 
 	public int createNewProcess(Word[] programa) {
@@ -1092,11 +1154,12 @@ public class Sistema {
 				System.out.println("\n");
 			}
 
-			if (command.startsWith("executa")) {
+			if (command.startsWith("Executa")) {
 				String[] commandParts = command.split(" ");
 				int id = Integer.parseInt(commandParts[1]);
 				if (s.gp.getProcessId(id) == -1) {
-					System.out.println("Processo com ID " + id + " não encontrado.");
+					// System.out.println("Processo com ID " + id + " não encontrado.");
+					System.out.println("EXECUTA COMANDO");
 				}
 				for (PCB pcb : s.gp.filaProntos) {
 					if (pcb.getId() == id) {
