@@ -40,6 +40,8 @@ public class SistemaV2 {
         private Queue<PCB> readyQueue;// Fila de processos prontos
         private Queue<PCB> blockedQueue;// Fila de processos bloqueados
         private Semaphore semCPU, semScheduler;
+        private GP gp;
+        private GM gm;
 
         public Scheduler(int ciclesLimit, Semaphore semCPU, Semaphore semScheduler) {
             this.ciclesLimit = ciclesLimit;
@@ -49,6 +51,14 @@ public class SistemaV2 {
             this.blockedQueue = new LinkedList<>();
         }
 
+        public void setGP(GP gp) {
+            this.gp = gp;
+        }
+
+        public void setGM(GM gm) {
+            this.gm = gm;
+        }
+
         public void addReadyProcess(PCB _pcb) {
             for (PCB pcb : readyQueue) {
                 if (pcb.getId() == _pcb.getId()) {
@@ -56,7 +66,7 @@ public class SistemaV2 {
                     return;
                 }
             }
-            _pcb.setRunning(false);
+
             readyQueue.add(_pcb);
         }
 
@@ -95,7 +105,6 @@ public class SistemaV2 {
                     return;
                 }
             }
-            _pcb.setRunning(false);
             blockedQueue.add(_pcb);
         }
 
@@ -198,7 +207,7 @@ public class SistemaV2 {
     }
 
     public enum Interrupts { // possiveis interrupcoes que esta CPU gera
-        noInterrupt, intEnderecoInvalido, intInstrucaoInvalida, intOverflow, intSTOP, intBlocked, intIO;
+        noInterrupt, intEnderecoInvalido, intInstrucaoInvalida, intOverflow, intSTOP, intCycle, intIO, intBlocked
     }
 
     public class CPU implements Runnable {
@@ -411,44 +420,47 @@ public class SistemaV2 {
                             System.out.println("Processo " + pcb.getId() + " interrompido por instrução inválida.");
                             break;
                     }
-                    pcb.setPC(pc);
                 }
+                pcb.setPC(pc);
                 scheduler.addCicle();
-                if (scheduler.isLimit()) {
-                    pcb.setRunning(false);
-                    irpt = Interrupts.intBlocked;
+
+                if (scheduler.getProcessCurrentCicles() % scheduler.ciclesLimit == 0) {
+                    irpt = Interrupts.intCycle;
+                    pcb.state = ih.handle(irpt, pc, pcb);
                     System.out.println("Processo " + pcb.getId() + " interrompido por atingir o limite de ciclos.");
-                    scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
-                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
-                    pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
-                    if (pcb == null) {
-                        break; // Se não houver mais processos prontos, interrompa a execução
-                    }
-                    System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
-                    System.out.println("PC do processo atual: " + pcb.getPC());
-                    ir = m[pc];
-                    setContext(0, mem.tamMem - 1, pcb.getPC());
-                    pcb.setRunning(true);
-                    scheduler.resetCicles();
-                    continue; // Continua a execução com o próximo processo
+                    return false;
+                    //scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
+                    //System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    //pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
+                    //if (pcb == null) {
+                    //    break; // Se não houver mais processos prontos, interrompa a execução
+                    //}
+                    //System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
+                    //System.out.println("PC do processo atual: " + pcb.getPC());
+                    //ir = m[pc];
+                    //setContext(0, mem.tamMem - 1, pcb.getPC());
+
+                    ///scheduler.resetCicles();
+                    //continue; // Continua a execução com o próximo processo
                 }
                 if (irpt != Interrupts.noInterrupt) {
-                    ih.handle(irpt, pc);
-                    if (irpt == Interrupts.intSTOP) {
-                        System.out.println("Processo " + pcb.getId() + " interrompido por STOP.");
-                        return true;
-                    } else if (irpt == Interrupts.intBlocked) {
-                        scheduler.addBlockProcess(pcb);
-                        System.out.println("Processo " + pcb.getId() + " bloqueado.");
-                        System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
-                        System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
-                        irpt = Interrupts.noInterrupt;
-                        return false;
-                    } else if (irpt == Interrupts.intIO) {
-                        System.out.println("Processo " + pcb.getId() + " aguardando operação de I/O.");
-                        irpt = Interrupts.noInterrupt; // Reseta a interrupção de I/O
-                    }
+                    pcb.state = ih.handle(irpt, pc, pcb);
                     break;
+//                    if (irpt == Interrupts.intSTOP) {
+//                        System.out.println("Processo " + pcb.getId() + " interrompido por STOP.");
+//                        return true;
+//                    } else if (irpt == Interrupts.intBlocked) {
+//                        scheduler.addBlockProcess(pcb);
+//                        System.out.println("Processo " + pcb.getId() + " bloqueado.");
+//                        System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
+//                        System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+//                        irpt = Interrupts.noInterrupt;
+//                        return false;
+//                    } else if (irpt == Interrupts.intIO) {
+//                        System.out.println("Processo " + pcb.getId() + " aguardando operação de I/O.");
+//                        irpt = Interrupts.noInterrupt; // Reseta a interrupção de I/O
+//                    }
+//                    break;
                 }
             }
             return true;
@@ -550,38 +562,53 @@ public class SistemaV2 {
             }
         }
 
-        public boolean alocaPrograma(Word[] programa) {
+        public int alocaPrograma(Word[] programa) {
             int numeroPalavras = programa.length;
             int numeroFramesNecessarios = (int) Math.ceil((double) numeroPalavras / tamPg);
             List<Integer> framesDisponiveis = getFramesDisponiveis();
-
-            if (framesDisponiveis.size() < numeroFramesNecessarios) {
-                System.out.println("Nao há frames suficientes para alocar o programa");
-                return false;
-            }
-
+            int indexInicioProg = framesDisponiveis.getFirst() * tamPg;
             framesAlocados = new int[numeroFramesNecessarios];
             int indicePrograma = 0;
             for (int index = 0; index < numeroFramesNecessarios; index++) {
                 int frameIndexDisponivel = framesDisponiveis.get(index);
                 tabelaPaginas.alocaFrame(frameIndexDisponivel);
                 framesAlocados[index] = frameIndexDisponivel;
-
                 int indexInicio = frameIndexDisponivel * tamPg;
                 int numIntrucoes = Math.min(tamPg, numeroPalavras - indicePrograma);
                 carregarInstrucoesNaMemoria(indexInicio, indicePrograma, programa);
                 indicePrograma += numIntrucoes;
             }
             System.out.println("Programa alocado com sucesso. Total de frames alocados: " + numeroFramesNecessarios);
+            return indexInicioProg;
+        }
+
+        public boolean podeAlocaPrograma(Word[] programa) {
+            int numeroPalavras = programa.length;
+            int numeroFramesNecessarios = (int) Math.ceil((double) numeroPalavras / tamPg);
+            List<Integer> framesDisponiveis = getFramesDisponiveis();
+
+            if (framesDisponiveis.size() < numeroFramesNecessarios) {
+                System.out.println("Não há frames suficientes para alocar o programa");
+                return false;
+            }
+
             return true;
         }
 
         public void desaloca(List<Integer> framesAlocados) {
             if (framesAlocados != null) {
+
                 for (int frameIndex : framesAlocados) {
                     tabelaPaginas.liberaFrame(frameIndex);
                 }
+
+                for (int frameIndex : framesAlocados) {
+                    for (int i = frameIndex * tamPg; i < (frameIndex + 1) * tamPg; i++) {
+                        m[i] = new Word(Opcode.___, -1, -1, -1);
+                    }
+                }
                 System.out.println("Frames desalocados com sucesso.");
+
             } else {
                 System.out.println("No frames were allocated or provided for deallocation.");
             }
@@ -593,15 +620,15 @@ public class SistemaV2 {
         private int tamPrograma;
         private List<Integer> framesAlocados;
         private int pc;
-        private boolean isRunning;
-        private int[] registradores; // Adicionado para armazenar os registradores
-        private CPU cpu;
+        public CPU cpu;
+        public String state = "ready";
 
         public PCB(int id, List<Integer> framesAlocados, int tamPrograma) {
             this.id = id;
             this.framesAlocados = framesAlocados;
             this.tamPrograma = tamPrograma;
-            this.registradores = new int[10]; // Inicializa o array de registradores
+            this.cpu = null;
+            this.state = "ready";
         }
 
         public void saveCPUContext(CPU cpu) {
@@ -609,13 +636,22 @@ public class SistemaV2 {
             this.pc = cpu.pc;
 
         }
-        public void setRunning(boolean isRunning) {
-            this.isRunning = isRunning;
+
+        public void setCPU(CPU cpu) {
+            this.cpu = cpu;
         }
 
-        public boolean isRunning() {
-            return this.isRunning;
+        public CPU getCPU() {
+            return this.cpu;
         }
+
+//        public void setRunning(boolean isRunning) {
+//            this.isRunning = isRunning;
+//        }
+
+        //public boolean isRunning() {
+            //return this.isRunning;
+        //}
 
         public void setPC(int pc) {
             this.pc = pc;
@@ -625,13 +661,13 @@ public class SistemaV2 {
             return pc;
         }
 
-        public int[] getRegistradores() {
-            return registradores;
-        }
+//        public int[] getRegistradores() {
+//            return registradores;
+//        }
 
-        public void setRegistradores(int[] registradores) {
-            this.registradores = registradores;
-        }
+//        public void setRegistradores(int[] registradores) {
+//            this.registradores = registradores;
+//        }
 
         public List<Integer> getFramesAlocados() {
             return this.framesAlocados;
@@ -662,17 +698,23 @@ public class SistemaV2 {
 
         public boolean criaProcesso(Word[] programa) {
             int tamanhoPrograma = programa.length;
-
-            if (!gm.alocaPrograma(programa)) {
-                System.out.println("Nao há memória suficiente para alocar o programa.");
+            int index_na_moria = 0;
+            if (!gm.podeAlocaPrograma(programa)) {
+                System.out.println("Não há memória suficiente para alocar o programa.");
                 return false;
+            }
+
+            else {
+                index_na_moria = gm.alocaPrograma(programa);
             }
 
             List<Integer> FramesAlocados = gm.getFramesAlocados();
             PCB pcb = new PCB(processID++, FramesAlocados, tamanhoPrograma);
-            pcb.setPC(0);
+            System.out.println("INDEX NA MEMORIA");
+            System.out.println(index_na_moria);
+            pcb.setPC(index_na_moria);
             filaProntos.add(pcb);
-            scheduler.addReadyProcess(pcb);
+
             System.out.println("Processo criado com sucesso. ID do Processo: " + pcb.getId());
             return true;
         }
@@ -752,8 +794,82 @@ public class SistemaV2 {
     }
 
     public class InterruptHandling {
-        public void handle(Interrupts irpt, int pc) {
+
+        private GP gp;
+
+        public void setGP(GP gp) {
+            this.gp = gp;
+        }
+
+
+
+
+        public void handleWithoutScheduler(Interrupts irpt, int pc) { // apenas avisa - todas interrupcoes neste momento
+            // finalizam o
+            // programa
             System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
+        }
+
+        public String handle(Interrupts irpt, int pc, PCB pcb) { // apenas avisa - todas interrupcoes neste momento
+            // finalizam o
+            // programa
+            System.out.println("                                               Interrupcao " + irpt + "   pc: " + pc);
+            switch (irpt) {
+                case intSTOP -> {
+                    System.out.println("Processo sofrendo escalonamento");
+                    gp.desalocaProcesso(pcb.getId());
+
+                    //gm.desaloca(pcb.getFramesAlocados());
+                    return "ready";
+                }
+                case intInstrucaoInvalida -> {
+                    gp.desalocaProcesso(pcb.getId());
+                    System.out.println("Instrução inválida, matando o processo.");
+                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
+                    return "ready";
+                }
+                case intOverflow -> {
+                    System.out.println("Overflow.");
+                    scheduler.addBlockProcess(pcb);
+                    System.out.println("Processo bloqueado por overflow.");
+                    System.out.println("Processo " + pcb.getId() + " bloqueado.");
+                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
+                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    return "ready";
+                }
+                case intBlocked -> {
+                    scheduler.addBlockProcess(pcb);
+
+                    System.out.println("Processo bloqueado.");
+                    System.out.println("Processo " + pcb.getId() + " bloqueado.");
+                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
+                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    return "blocked";
+                }
+                case intCycle -> {
+                    System.out.println("Processo bloqueado por limite de ciclos.");
+                    gp.filaProntos.add(pcb);
+                    scheduler.addReadyProcess(pcb); // Adiciona o PCB aos processos prontos
+                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    pcb = scheduler.removeNextProcess(); // Remove o próximo processo da fila de prontos
+                    System.out.println("Processo " + pcb.getId() + " agora pronto para execução.");
+                    System.out.println("PC do processo atual: " + pcb.getPC());
+
+                    return "ready";
+                }
+                case intIO -> {
+                    scheduler.addBlockProcess(pcb);
+                    System.out.println("Precosso bloqueado por IO");
+                    System.out.println("Processo " + pcb.getId() + " bloqueado.");
+                    System.out.println("Processos na fila de bloqueados: " + scheduler.getBlockedQueue());
+                    System.out.println("Processos na fila de prontos: " + scheduler.getReadyQueue());
+                    return "blocked";
+                }
+                default -> {
+                    return "ready";
+                }
+            }
         }
     }
 
@@ -798,18 +914,22 @@ public class SistemaV2 {
     public BlockingQueue<Integer> ioQueue;
 
     public SistemaV2(int tamanhoMemoria, int tamanhoPg) {
-        ih = new InterruptHandling();
-        sysCall = new SysCallHandling();
+        ih = new InterruptHandling(); // Passa GP para InterruptHandling
+        sysCall = new SysCallHandling(); // Passa VM para SysCallHandling
         semCPU = new Semaphore(0);
         semScheduler = new Semaphore(1);
-        scheduler = new Scheduler(4, semCPU, semScheduler); // x ciclos por ciclo de cpu
+        scheduler = new Scheduler(4, semCPU, semScheduler);
         vm = new VM(tamanhoMemoria, ih, sysCall, scheduler, semCPU, semScheduler);
         sysCall.setVM(vm);
-        progs = new Programas();
         gm = new GM(vm.m, tamanhoPg);
         gp = new GP(gm);
+        scheduler.setGP(gp);
+        scheduler.setGM(gm);
+        ih.setGP(gp);
+        progs = new Programas();
         ioQueue = new LinkedBlockingQueue<>();
     }
+
 
     public int createNewProcess(Word[] programa) {
         if (programa == null) {
@@ -828,7 +948,7 @@ public class SistemaV2 {
         Thread shellThread = new Thread(new ThreadShell(this));
         Thread cpuThread = new Thread(vm.cpu);
         Thread schedulerThread = new Thread(scheduler);
-        Thread ioThread = new Thread(new IODevice(this));
+        Thread ioThread = new Thread(new IODevice(this)); // Cria uma nova thread para executar o IODevice
 
         shellThread.start();
         cpuThread.start();
@@ -934,15 +1054,29 @@ public class SistemaV2 {
                 }
 
                 if (command.equals("execAll")) {
-//                    for (PCB pcb : sistema.gp.filaProntos) {
-//                        sistema.scheduler.addReadyProcess(pcb);
-//                    }
-                    System.out.println("Processos prontos: " + scheduler.getReadyQueue());
-                    while (!sistema.scheduler.readyQueue.isEmpty()) {
-                        PCB pcb = sistema.scheduler.readyQueue.poll();
+
+                    while (true) {
+                        PCB pcb = sistema.gp.filaProntos.poll();
+                        pcb.state = "running";
+                        if (pcb.getCPU() != null) {
+                            sistema.vm.cpu = pcb.getCPU();
+                        }
                         sistema.vm.cpu.setContext(0, sistema.vm.tamMem - 1, pcb.getPC());
-                        sistema.vm.cpu.run(scheduler, pcb);
+                        if (sistema.vm.cpu.run(sistema.scheduler, pcb) == false) {
+                            sistema.gp.filaProntos.add(pcb);
+                        }
+
+
+                        System.out.println("PCB STATE");
+                        System.out.println(pcb.state);
+                        pcb.setCPU(sistema.vm.cpu);
+                        //System.out.println(sistema.gp.filaProntos);
+                        if (sistema.gp.filaProntos.isEmpty() == true) {
+                            break;
+                        }
+
                     }
+
                 }
 
                 if (command.equals("traceOn")) {
@@ -959,26 +1093,41 @@ public class SistemaV2 {
 
     public class IODevice implements Runnable {
         private SistemaV2 sistema;
+        private BlockingQueue<Integer> ioQueue;
 
         public IODevice(SistemaV2 sistema) {
             this.sistema = sistema;
+            this.ioQueue = new LinkedBlockingQueue<>();
+        }
+
+        public void writeRequest(int request) {
+            try {
+                ioQueue.put(request);
+                System.out.println("Escrevendo request no ioQueue: " + request);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.out.println("Erro ao escrever request no ioQueue: " + request);
+            }
         }
 
         @Override
         public void run() {
             while (true) {
                 try {
-                    Integer ioRequest = sistema.ioQueue.take();
-                    Thread.sleep(1000); // Simular tempo de IO
+                    Integer ioRequest = ioQueue.take();
+                    System.out.println("Processando request de I/O: " + ioRequest);
+                    Thread.sleep(1000); // Simula o tempo de operação de I/O
                     sistema.vm.cpu.irpt = Interrupts.intIO;
                     sistema.vm.semCPU.release(); // Acorda a CPU para continuar a execução
-                    System.out.println("Operação de IO completa. CPU acordada.");
+                    System.out.println("Operação de I/O completa. CPU acordada.");
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
+                    System.out.println("Thread de I/O interrompida.");
                 }
             }
         }
     }
+
 
     public class Programas {
         public Word[] fatorial = new Word[]{
